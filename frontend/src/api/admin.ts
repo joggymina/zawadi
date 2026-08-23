@@ -1,0 +1,39 @@
+import { request } from "./client";
+import type { AdminSettings, Offer, LoanRepayment } from "./types";
+
+export function getSettings() {
+  return request<AdminSettings>("/api/admin/settings");
+}
+
+export function updateSettings(patch: Partial<{
+  investAnnualRatePct: number;
+  loanAnnualRatePct: number;
+  guarantorsRequired: number;
+  guarantorCoverageExtraPct: number;
+}>) {
+  return request<AdminSettings>("/api/admin/settings", { method: "PUT", body: patch });
+}
+
+export function listOffers() {
+  return request<Offer[]>("/api/admin/offers");
+}
+
+export function createOffer(params: { title: string; description: string }) {
+  return request<Offer>("/api/admin/offers", { method: "POST", body: params });
+}
+
+export function deleteOffer(id: string) {
+  return request<null>(`/api/admin/offers/${id}`, { method: "DELETE" });
+}
+
+export function listPendingRepayments() {
+  return request<LoanRepayment[]>("/api/admin/repayments/pending");
+}
+
+export function approveRepayment(id: string) {
+  return request<LoanRepayment>(`/api/admin/repayments/${id}/approve`, { method: "POST" });
+}
+
+export function rejectRepayment(id: string) {
+  return request<LoanRepayment>(`/api/admin/repayments/${id}/reject`, { method: "POST" });
+}
