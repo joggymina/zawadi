@@ -15,6 +15,9 @@ import offersRoutes from "./routes/offers.routes";
 export function createApp() {
   const app = express();
 
+  
+  app.set("trust proxy", 1);
+
   app.use(helmet());
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true, exposedHeaders: ["X-Access-Token"] }));
   app.use(express.json({ limit: "100kb" }));
