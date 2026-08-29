@@ -1,13 +1,10 @@
 import { useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
 import * as adminApi from "../api/admin";
 import type { AdminSettings, Offer, LoanRepayment } from "../api/types";
 import { fmt, errorMessage } from "../utils/format";
-import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
 export function AdminPage() {
-  const { user } = useAuth();
   const showToast = useToast();
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [offers, setOffers] = useState<Offer[]>([]);
@@ -28,7 +25,6 @@ export function AdminPage() {
 
   useEffect(() => { load(); }, []);
 
-  if (user?.role !== "ADMIN") return <Navigate to="/" replace />;
   if (error) return <div style={{ padding: 20, color: "var(--rust)", fontSize: 13.5 }}>{error}</div>;
   if (!settings) return <div style={{ padding: 20, color: "var(--ink-soft)" }}>Loading…</div>;
 

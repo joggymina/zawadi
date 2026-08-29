@@ -20,10 +20,18 @@ export const loginSchema = z.object({
 const REFRESH_COOKIE = "refreshToken";
 
 function refreshCookieOptions() {
+  // Cross-site cookies (frontend and backend on different domains — the
+  // common case with Vercel + a separate API host) require SameSite=None
+  // and Secure. `SameSite=Strict`/`Lax` are silently dropped by the
+  // browser on cross-site requests, which is what breaks session
+  // restoration on reload once frontend and backend live on different
+  // origins. Locally over http://localhost, `None` isn't usable without
+  // TLS, so development falls back to `Lax`.
+  const crossSite = env.NODE_ENV === "production";
   return {
     httpOnly: true,
-    secure: env.NODE_ENV === "production",
-    sameSite: "strict" as const,
+    secure: crossSite,
+    sameSite: (crossSite ? "none" : "lax") as "none" | "lax",
     maxAge: env.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
     path: "/api/auth",
   };

@@ -59,15 +59,32 @@ async function parseOrThrow(res: Response) {
  * Attempts to silently restore a session using the refresh cookie.
  * Returns the user if successful, or null if there's no valid session
  * (e.g. first visit, or the refresh token expired/was revoked).
+ *
+ * Deduplicated: refresh tokens are single-use and rotate on every call,
+ * so if several requests 401 at the same moment (e.g. a page firing a
+ * Promise.all of authenticated calls), only the *first* refresh attempt
+ * can ever succeed — any concurrent one races against an already-rotated
+ * token and fails. Sharing one in-flight promise means every caller
+ * waits on the same attempt instead of each trying (and losing) their
+ * own race.
  */
+let inFlightRefresh: Promise<unknown> | null = null;
+
 export async function tryRefresh<T = unknown>(): Promise<T | null> {
-  try {
-    const res = await rawRequest("/api/auth/refresh", { method: "POST" });
-    if (!res.ok) return null;
-    return (await parseOrThrow(res)) as T;
-  } catch {
-    return null;
+  if (!inFlightRefresh) {
+    inFlightRefresh = (async () => {
+      try {
+        const res = await rawRequest("/api/auth/refresh", { method: "POST" });
+        if (!res.ok) return null;
+        return await parseOrThrow(res);
+      } catch {
+        return null;
+      } finally {
+        inFlightRefresh = null;
+      }
+    })();
   }
+  return inFlightRefresh as Promise<T | null>;
 }
 
 /**

@@ -6,9 +6,14 @@ const TITLES: Record<string, string> = {
   "/performance": "Investment performance",
   "/loans": "Loans",
   "/account": "My account",
-  "/admin": "Admin panel",
 };
 
+// This layout is the customer-facing shell only. It intentionally has no
+// knowledge of the admin role or an /admin link — the admin surface lives
+// entirely under AdminLayout, with its own login route and its own guard
+// (see components/AdminLayout.tsx). Keeping them separate means a bug in
+// this file's logic can't expose the admin panel, because there's no
+// admin-related logic here to have a bug in.
 export function AppLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -30,12 +35,7 @@ export function AppLayout() {
             <div style={{ width: 30, height: 30, borderRadius: 9, background: "var(--green)", display: "flex", alignItems: "center", justifyContent: "center", color: "#f4fbf4", fontSize: 15 }}>✦</div>
             <span className="display" style={{ fontWeight: 600, fontSize: 20, letterSpacing: -0.3 }}>Zawadi</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ fontSize: 12.5, color: "var(--ink-soft)" }}>@{user.username}</span>
-            {user.role === "ADMIN" && (
-              <NavLink to="/admin" style={{ color: "var(--ink-soft)", display: "flex" }} aria-label="Admin panel">⚙</NavLink>
-            )}
-          </div>
+          <span style={{ fontSize: 12.5, color: "var(--ink-soft)" }}>@{user.username}</span>
         </div>
         {title && <div className="display" style={{ fontSize: 22, marginTop: 12, fontWeight: 500 }}>{title}</div>}
       </header>
@@ -44,12 +44,12 @@ export function AppLayout() {
         <Outlet />
       </div>
 
-      <BottomNav isAdmin={user.role === "ADMIN"} />
+      <BottomNav />
     </div>
   );
 }
 
-function BottomNav({ isAdmin }: { isAdmin: boolean }) {
+function BottomNav() {
   const items = [
     { to: "/", label: "Home", icon: "⌂" },
     { to: "/performance", label: "Performance", icon: "↗" },
@@ -64,12 +64,6 @@ function BottomNav({ isAdmin }: { isAdmin: boolean }) {
           <span style={{ fontSize: 10.5 }}>{item.label}</span>
         </NavLink>
       ))}
-      {isAdmin && (
-        <NavLink to="/admin" className={({ isActive }) => (isActive ? "active" : "")}>
-          <span style={{ fontSize: 18 }}>⚙</span>
-          <span style={{ fontSize: 10.5 }}>Admin</span>
-        </NavLink>
-      )}
     </nav>
   );
 }
