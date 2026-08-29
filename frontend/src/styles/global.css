@@ -136,7 +136,7 @@ input, button { font-family: inherit; }
   display: flex;
   padding: 10px 0 14px;
 }
-.bottom-nav button {
+.bottom-nav a {
   flex: 1;
   background: none;
   border: none;
@@ -147,8 +147,9 @@ input, button { font-family: inherit; }
   cursor: pointer;
   color: var(--ink-soft);
   font-family: var(--font-body);
+  text-decoration: none;
 }
-.bottom-nav button.active { color: var(--green); font-weight: 500; }
+.bottom-nav a.active { color: var(--green); font-weight: 500; }
 
 .toast {
   position: fixed;
