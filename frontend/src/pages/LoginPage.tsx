@@ -53,6 +53,16 @@ export function LoginPage() {
           </div>
         </div>
       </form>
+
+      {/* Deliberately just a static link, not gated on any role — the
+          customer session has no idea who's an admin. AdminLayout's own
+          guard is what actually protects /admin; this only makes the
+          door easier to find. */}
+      <div style={{ position: "fixed", bottom: 20, left: 0, right: 0, textAlign: "center" }}>
+        <Link to="/admin/login" style={{ fontSize: 12, color: "var(--ink-soft)", textDecoration: "none" }}>
+          Admin login
+        </Link>
+      </div>
     </div>
   );
 }
