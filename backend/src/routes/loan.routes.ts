@@ -6,6 +6,7 @@ import {
   createLoan,
   listMarketplace,
   listMine,
+  listFunded,
   fund,
   repay,
   createLoanSchema,
@@ -19,6 +20,7 @@ router.use(authenticate);
 router.post("/", validateBody(createLoanSchema), asyncHandler(createLoan));
 router.get("/marketplace", asyncHandler(listMarketplace));
 router.get("/mine", asyncHandler(listMine));
+router.get("/funded", asyncHandler(listFunded));
 router.post("/:id/fund", validateBody(fundLoanSchema), asyncHandler(fund));
 router.post("/:id/repay", validateBody(repayLoanSchema), asyncHandler(repay));
 
