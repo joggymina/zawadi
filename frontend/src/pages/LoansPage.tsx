@@ -148,15 +148,37 @@ export function LoansPage() {
       )}
 
       {fundModal && (
-        <AmountModal title="Fund this loan" balanceLabel={`Your available balance: ${fmt(account.principalBalance)}`}
-          onClose={() => setFundModal(null)}
-          onSubmit={async (amt) => { await loansApi.fund(fundModal.id, amt); await load(); showToast(`Funded ${fmt(amt)} toward ${fundModal.borrower?.username}'s loan`); setFundModal(null); }} />
-      )}
-      {repayModal && (
-        <AmountModal title="Repay loan" balanceLabel={`Outstanding: ${fmt(Number(repayModal.principalOwed) + Number(repayModal.interestOwed))}`}
-          onClose={() => setRepayModal(null)}
-          onSubmit={async (amt) => { await loansApi.repay(repayModal.id, amt); await load(); showToast(`Repaid ${fmt(amt)} — awaiting admin approval`); setRepayModal(null); }} />
-      )}
+  <AmountModal
+    title="Fund this loan"
+    balanceLabel={`Your available balance: ${fmt(account.principalBalance)}`}
+    confirmLabel="Fund"
+    needsConfirm
+    confirmHint={`Funding @${fundModal.borrower?.username ?? "borrower"}'s loan.`}
+    onClose={() => setFundModal(null)}
+    onSubmit={async (amt) => {
+      await loansApi.fund(fundModal.id, amt);
+      await load();
+      showToast(`Funded ${fmt(amt)} toward ${fundModal.borrower?.username}'s loan`);
+      setFundModal(null);
+    }}
+  />
+)}
+{repayModal && (
+  <AmountModal
+    title="Repay loan"
+    balanceLabel={`Outstanding: ${fmt(Number(repayModal.principalOwed) + Number(repayModal.interestOwed))}`}
+    confirmLabel="Repay"
+    needsConfirm
+    confirmHint="Repayment is held until an admin approves it. Funders are credited only after approval."
+    onClose={() => setRepayModal(null)}
+    onSubmit={async (amt) => {
+      await loansApi.repay(repayModal.id, amt);
+      await load();
+      showToast(`Repaid ${fmt(amt)} — awaiting admin approval`);
+      setRepayModal(null);
+    }}
+  />
+)}
       {newLoanOpen && (
         <NewLoanModal settings={settings} onClose={() => setNewLoanOpen(false)}
           onSubmit={async (params) => { await loansApi.createLoan(params); await load(); showToast("Loan request published"); setNewLoanOpen(false); }} />

@@ -110,13 +110,33 @@ export function HomePage() {
       </div>
 
       {modal === "invest" && (
-        <AmountModal title="Invest" onClose={() => setModal(null)}
-          onSubmit={async (amt) => { await accountApi.invest(amt); await load(); showToast(`Invested ${fmt(amt)}`); setModal(null); }} />
-      )}
-      {modal === "withdraw" && (
-        <AmountModal title="Withdraw" balanceLabel={`Available balance: ${fmt(account.principalBalance)}`} onClose={() => setModal(null)}
-          onSubmit={async (amt) => { await accountApi.withdraw(amt); await load(); showToast(`Withdrew ${fmt(amt)}`); setModal(null); }} />
-      )}
+  <AmountModal
+    title="Invest"
+    confirmLabel="Invest"
+    onClose={() => setModal(null)}
+    onSubmit={async (amt) => {
+      await accountApi.invest(amt);
+      await load();
+      showToast(`Invested ${fmt(amt)}`);
+      setModal(null);
+    }}
+  />
+)}
+{modal === "withdraw" && (
+  <AmountModal
+    title="Withdraw"
+    balanceLabel={`Available balance: ${fmt(account.principalBalance)}`}
+    confirmLabel="Withdraw"
+    needsConfirm
+    onClose={() => setModal(null)}
+    onSubmit={async (amt) => {
+      await accountApi.withdraw(amt);
+      await load();
+      showToast(`Withdrew ${fmt(amt)}`);
+      setModal(null);
+    }}
+  />
+)}
     </div>
   );
 }

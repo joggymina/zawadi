@@ -64,24 +64,26 @@ export function AdminPage() {
   }
 
   async function approve(id: string) {
-    try {
-      await adminApi.approveRepayment(id);
-      setPending((p) => p.filter((r) => r.id !== id));
-      showToast("Approved — funders credited");
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
+  if (!window.confirm("Approve this repayment? Funders will be credited immediately.")) return;
+  try {
+    await adminApi.approveRepayment(id);
+    await load();
+    showToast("Approved — funders credited");
+  } catch (err) {
+    showToast(errorMessage(err));
   }
+}
 
-  async function reject(id: string) {
-    try {
-      await adminApi.rejectRepayment(id);
-      setPending((p) => p.filter((r) => r.id !== id));
-      showToast("Rejected — borrower refunded");
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
+async function reject(id: string) {
+  if (!window.confirm("Reject this repayment? The borrower will be refunded and the loan balance restored.")) return;
+  try {
+    await adminApi.rejectRepayment(id);
+    await load();
+    showToast("Rejected — borrower refunded");
+  } catch (err) {
+    showToast(errorMessage(err));
   }
+}
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
