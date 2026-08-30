@@ -107,8 +107,27 @@ export async function rejectRepayment(req: Request, res: Response) {
   return res.json(result);
 }
 
-export async function listUsers(_req: Request, res: Response) {
+export async function listUsers(req: Request, res: Response) {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const kyc = typeof req.query.kyc === "string" ? req.query.kyc.trim().toUpperCase() : "";
+
+  const where: {
+    kycStatus?: "PENDING" | "VERIFIED" | "REJECTED";
+    OR?: Array<{ username?: { contains: string; mode: "insensitive" }; phoneNumber?: { contains: string; mode: "insensitive" } }>;
+  } = {};
+
+  if (kyc === "PENDING" || kyc === "VERIFIED" || kyc === "REJECTED") {
+    where.kycStatus = kyc;
+  }
+  if (q) {
+    where.OR = [
+      { username: { contains: q, mode: "insensitive" } },
+      { phoneNumber: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
   const users = await prisma.user.findMany({
+    where,
     select: {
       id: true,
       username: true,
@@ -120,8 +139,8 @@ export async function listUsers(_req: Request, res: Response) {
         select: { principalBalance: true, interestBalance: true },
       },
     },
-    orderBy: { createdAt: "desc" },
-    take: 100,
+    orderBy: [{ kycStatus: "asc" }, { createdAt: "desc" }],
+    take: 200,
   });
   return res.json(users);
 }

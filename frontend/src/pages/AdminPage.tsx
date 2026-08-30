@@ -3,6 +3,7 @@ import * as adminApi from "../api/admin";
 import type { AdminSettings, Offer, LoanRepayment } from "../api/types";
 import { fmt, errorMessage } from "../utils/format";
 import { useToast } from "../context/ToastContext";
+import { Link } from "react-router-dom";
 
 export function AdminPage() {
   const showToast = useToast();
@@ -170,58 +171,26 @@ export function AdminPage() {
         )}
       </section>
 
-      <section>
-        <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
-          Users &amp; KYC
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {users.map((u) => (
-            <div
-              key={u.id}
-              className="card"
-              style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: 13.5, fontWeight: 500 }}>
-                    @{u.username}
-                    {u.role === "ADMIN" ? " · admin" : ""}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>
-                    {u.phoneNumber}
-                    {u.account
-                      ? ` · bal ${fmt(Number(u.account.principalBalance) + Number(u.account.interestBalance))}`
-                      : ""}
-                  </div>
-                </div>
-                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-soft)" }}>
-                  {u.kycStatus}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {(["PENDING", "VERIFIED", "REJECTED"] as const).map((status) => (
-                  <button
-                    key={status}
-                    className="btn"
-                    disabled={u.kycStatus === status}
-                    style={{
-                      flex: 1,
-                      padding: "6px 0",
-                      fontSize: 11,
-                      background: u.kycStatus === status ? "var(--green)" : "transparent",
-                      color: u.kycStatus === status ? "#f4fbf4" : "var(--ink)",
-                      border: `1px solid ${u.kycStatus === status ? "var(--green)" : "var(--line)"}`,
-                    }}
-                    onClick={() => changeKyc(u.id, status)}
-                  >
-                    {status}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+<section>
+  <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
+    Users &amp; KYC
+  </div>
+  <Link
+    to="/admin/users"
+    className="card"
+    style={{
+      display: "block",
+      padding: "14px 16px",
+      textDecoration: "none",
+      color: "inherit",
+    }}
+  >
+    <div style={{ fontSize: 14, fontWeight: 500 }}>Open user list →</div>
+    <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
+      Search, filter by status, and update verification
+    </div>
+  </Link>
+</section>
 
       <section>
         <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>

@@ -50,8 +50,12 @@ export function rejectRepayment(id: string) {
   return request<LoanRepayment>(`/api/admin/repayments/${id}/reject`, { method: "POST" });
 }
 
-export function listUsers() {
-  return request<AdminUser[]>("/api/admin/users");
+export function listUsers(params?: { q?: string; kyc?: string }) {
+  const sp = new URLSearchParams();
+  if (params?.q) sp.set("q", params.q);
+  if (params?.kyc) sp.set("kyc", params.kyc);
+  const qs = sp.toString();
+  return request<AdminUser[]>(`/api/admin/users${qs ? `?${qs}` : ""}`);
 }
 
 export function setUserKyc(id: string, kycStatus: "PENDING" | "VERIFIED" | "REJECTED") {

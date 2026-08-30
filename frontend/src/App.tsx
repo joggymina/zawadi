@@ -11,6 +11,7 @@ import { PerformancePage } from "./pages/PerformancePage";
 import { LoansPage } from "./pages/LoansPage";
 import { AccountPage } from "./pages/AccountPage";
 import { AdminPage } from "./pages/AdminPage";
+import { AdminUsersPage } from "./pages/AdminUsersPage";
 
 export default function App() {
   return (
@@ -18,7 +19,6 @@ export default function App() {
       <AuthProvider>
         <ToastProvider>
           <Routes>
-            {/* Customer app */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route element={<AppLayout />}>
@@ -28,11 +28,10 @@ export default function App() {
               <Route path="/account" element={<AccountPage />} />
             </Route>
 
-            {/* Admin — entirely separate login and shell, no link between
-                the two surfaces anywhere in the customer app. */}
             <Route path="/admin/login" element={<AdminLoginPage />} />
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<AdminPage />} />
+              <Route path="users" element={<AdminUsersPage />} />
             </Route>
           </Routes>
         </ToastProvider>
