@@ -1,16 +1,28 @@
 import { request } from "./client";
 import type { AdminSettings, Offer, LoanRepayment } from "./types";
 
+export type AdminUser = {
+  id: string;
+  username: string;
+  phoneNumber: string;
+  role: "USER" | "ADMIN";
+  kycStatus: "PENDING" | "VERIFIED" | "REJECTED";
+  createdAt: string;
+  account: { principalBalance: string; interestBalance: string } | null;
+};
+
 export function getSettings() {
   return request<AdminSettings>("/api/admin/settings");
 }
 
-export function updateSettings(patch: Partial<{
-  investAnnualRatePct: number;
-  loanAnnualRatePct: number;
-  guarantorsRequired: number;
-  guarantorCoverageExtraPct: number;
-}>) {
+export function updateSettings(
+  patch: Partial<{
+    investAnnualRatePct: number;
+    loanAnnualRatePct: number;
+    guarantorsRequired: number;
+    guarantorCoverageExtraPct: number;
+  }>,
+) {
   return request<AdminSettings>("/api/admin/settings", { method: "PUT", body: patch });
 }
 
@@ -36,4 +48,15 @@ export function approveRepayment(id: string) {
 
 export function rejectRepayment(id: string) {
   return request<LoanRepayment>(`/api/admin/repayments/${id}/reject`, { method: "POST" });
+}
+
+export function listUsers() {
+  return request<AdminUser[]>("/api/admin/users");
+}
+
+export function setUserKyc(id: string, kycStatus: "PENDING" | "VERIFIED" | "REJECTED") {
+  return request<{ id: string; username: string; kycStatus: string; role: string }>(
+    `/api/admin/users/${id}/kyc`,
+    { method: "PATCH", body: { kycStatus } },
+  );
 }

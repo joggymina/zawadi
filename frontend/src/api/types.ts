@@ -48,6 +48,14 @@ export interface LoanGuarantor {
   user?: { username: string };
 }
 
+export interface LoanFunding {
+  id: string;
+  funderId: string;
+  amount: string;
+  createdAt?: string;
+  funder?: { username: string };
+}
+
 export interface RepaymentDistribution {
   id: string;
   funderId: string;
@@ -76,6 +84,7 @@ export interface Loan {
   createdAt: string;
   borrower?: { username: string };
   guarantors: LoanGuarantor[];
+  fundings?: LoanFunding[];
   repayments?: LoanRepayment[];
 }
 

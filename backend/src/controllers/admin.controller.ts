@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { AppError } from "../middleware/errorHandler";
 import { getAdminSettings, updateAdminSettings } from "../services/adminSettings.service";
 import * as loanService from "../services/loan.service";
 import { writeAudit } from "../services/audit.service";
@@ -15,6 +16,10 @@ export const updateSettingsSchema = z.object({
 export const offerSchema = z.object({
   title: z.string().min(1).max(80),
   description: z.string().min(1).max(300),
+});
+
+export const setKycSchema = z.object({
+  kycStatus: z.enum(["PENDING", "VERIFIED", "REJECTED"]),
 });
 
 export async function getSettings(_req: Request, res: Response) {
@@ -100,4 +105,49 @@ export async function rejectRepayment(req: Request, res: Response) {
     ip: req.ip,
   });
   return res.json(result);
+}
+
+export async function listUsers(_req: Request, res: Response) {
+  const users = await prisma.user.findMany({
+    select: {
+      id: true,
+      username: true,
+      phoneNumber: true,
+      role: true,
+      kycStatus: true,
+      createdAt: true,
+      account: {
+        select: { principalBalance: true, interestBalance: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  return res.json(users);
+}
+
+export async function setUserKyc(req: Request, res: Response) {
+  const { kycStatus } = req.body as z.infer<typeof setKycSchema>;
+  const user = await prisma.user.findUnique({ where: { id: req.params.id } });
+  if (!user) throw new AppError("User not found.", 404);
+
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: { kycStatus },
+    select: {
+      id: true,
+      username: true,
+      kycStatus: true,
+      role: true,
+    },
+  });
+
+  await writeAudit({
+    userId: req.user!.id,
+    action: "ADMIN_KYC_UPDATE",
+    metadata: { targetUserId: user.id, username: user.username, kycStatus },
+    ip: req.ip,
+  });
+
+  return res.json(updated);
 }

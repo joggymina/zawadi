@@ -11,8 +11,11 @@ import {
   listPendingRepayments,
   approveRepayment,
   rejectRepayment,
+  listUsers,
+  setUserKyc,
   updateSettingsSchema,
   offerSchema,
+  setKycSchema,
 } from "../controllers/admin.controller";
 
 const router = Router();
@@ -28,5 +31,8 @@ router.delete("/offers/:id", asyncHandler(deleteOffer));
 router.get("/repayments/pending", asyncHandler(listPendingRepayments));
 router.post("/repayments/:id/approve", asyncHandler(approveRepayment));
 router.post("/repayments/:id/reject", asyncHandler(rejectRepayment));
+
+router.get("/users", asyncHandler(listUsers));
+router.patch("/users/:id/kyc", validateBody(setKycSchema), asyncHandler(setUserKyc));
 
 export default router;

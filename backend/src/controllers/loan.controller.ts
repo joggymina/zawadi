@@ -16,7 +16,6 @@ export const repayLoanSchema = z.object({ amount: z.number().positive() });
 
 export async function createLoan(req: Request, res: Response) {
   const body = req.body as z.infer<typeof createLoanSchema>;
-
   await assertCreateLoanAllowed(req.user!.id, body.amount);
 
   const loan = await loanService.createLoanRequest({
@@ -44,6 +43,10 @@ export async function listMarketplace(req: Request, res: Response) {
     include: {
       guarantors: { include: { user: { select: { username: true } } } },
       borrower: { select: { username: true } },
+      fundings: {
+        include: { funder: { select: { username: true } } },
+        orderBy: { createdAt: "asc" },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -55,6 +58,10 @@ export async function listMine(req: Request, res: Response) {
     where: { borrowerId: req.user!.id },
     include: {
       guarantors: { include: { user: { select: { username: true } } } },
+      fundings: {
+        include: { funder: { select: { username: true } } },
+        orderBy: { createdAt: "asc" },
+      },
       repayments: {
         include: { distributions: true },
         orderBy: { createdAt: "desc" },
@@ -67,7 +74,6 @@ export async function listMine(req: Request, res: Response) {
 
 export async function fund(req: Request, res: Response) {
   const { amount } = req.body as z.infer<typeof fundLoanSchema>;
-
   await assertFundAllowed(req.user!.id, amount);
 
   const loan = await loanService.fundLoan({
