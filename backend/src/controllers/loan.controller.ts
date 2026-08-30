@@ -113,3 +113,40 @@ export async function repay(req: Request, res: Response) {
   });
   return res.json(repayment);
 }
+
+export async function listFunded(req: Request, res: Response) {
+  const fundings = await prisma.loanFunding.findMany({
+    where: { funderId: req.user!.id },
+    orderBy: { createdAt: "desc" },
+    include: {
+      loan: {
+        include: {
+          borrower: { select: { username: true } },
+          guarantors: { include: { user: { select: { username: true } } } },
+          fundings: {
+            include: { funder: { select: { username: true } } },
+            orderBy: { createdAt: "asc" },
+          },
+          repayments: {
+            orderBy: { createdAt: "desc" },
+            include: {
+              distributions: {
+                where: { funderId: req.user!.id },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Shape: each row is "my stake" + the loan
+  return res.json(
+    fundings.map((f) => ({
+      fundingId: f.id,
+      myAmount: f.amount,
+      fundedAt: f.createdAt,
+      loan: f.loan,
+    })),
+  );
+}

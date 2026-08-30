@@ -2,17 +2,27 @@ import { useCallback, useEffect, useState } from "react";
 import * as loansApi from "../api/loans";
 import * as accountApi from "../api/account";
 import * as publicApi from "../api/public";
-import type { Loan, AccountSummary, AdminSettings } from "../api/types";
+import type { Loan, AccountSummary, AdminSettings, MyFunding } from "../api/types";
 import { AmountModal } from "../components/AmountModal";
 import { fmt, pct, errorMessage } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 import { NewLoanModal } from "../components/NewLoanModal";
 
+type SubTab = "marketplace" | "funded" | "mine";
+
+function statusMeta(status: Loan["status"]) {
+  if (status === "OPEN") return { label: "Open for funding", bg: "var(--amber-pale)", fg: "#7a5a2e" };
+  if (status === "REPAYING") return { label: "Repaying", bg: "#e6f0fb", fg: "#0c447c" };
+  if (status === "REPAID") return { label: "Fully repaid", bg: "var(--green-pale)", fg: "var(--green-deep)" };
+  return { label: status, bg: "var(--line)", fg: "var(--ink-soft)" };
+}
+
 export function LoansPage() {
   const showToast = useToast();
-  const [sub, setSub] = useState<"marketplace" | "mine">("marketplace");
+  const [sub, setSub] = useState<SubTab>("marketplace");
   const [marketLoans, setMarketLoans] = useState<Loan[]>([]);
   const [myLoans, setMyLoans] = useState<Loan[]>([]);
+  const [myFundings, setMyFundings] = useState<MyFunding[]>([]);
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [error, setError] = useState("");
@@ -22,14 +32,16 @@ export function LoansPage() {
 
   const load = useCallback(async () => {
     try {
-      const [market, mine, acc, s] = await Promise.all([
+      const [market, mine, funded, acc, s] = await Promise.all([
         loansApi.marketplace(),
         loansApi.mine(),
+        loansApi.funded(),
         accountApi.getMe(),
         publicApi.getPublicSettings(),
       ]);
       setMarketLoans(market);
       setMyLoans(mine);
+      setMyFundings(funded);
       setAccount(acc);
       setSettings(s);
     } catch (err) {
@@ -46,33 +58,29 @@ export function LoansPage() {
     return <div style={{ padding: 20, color: "var(--ink-soft)" }}>Loading…</div>;
   }
 
+  const tabBtn = (id: SubTab, label: string) => (
+    <button
+      className="btn"
+      onClick={() => setSub(id)}
+      style={{
+        flex: 1,
+        background: sub === id ? "var(--green)" : "transparent",
+        color: sub === id ? "#f4fbf4" : "var(--ink)",
+        border: `1px solid ${sub === id ? "var(--green)" : "var(--line)"}`,
+        fontSize: 12.5,
+        padding: "8px 4px",
+      }}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
-          className="btn"
-          onClick={() => setSub("marketplace")}
-          style={{
-            flex: 1,
-            background: sub === "marketplace" ? "var(--green)" : "transparent",
-            color: sub === "marketplace" ? "#f4fbf4" : "var(--ink)",
-            border: `1px solid ${sub === "marketplace" ? "var(--green)" : "var(--line)"}`,
-          }}
-        >
-          Fund a loan
-        </button>
-        <button
-          className="btn"
-          onClick={() => setSub("mine")}
-          style={{
-            flex: 1,
-            background: sub === "mine" ? "var(--green)" : "transparent",
-            color: sub === "mine" ? "#f4fbf4" : "var(--ink)",
-            border: `1px solid ${sub === "mine" ? "var(--green)" : "var(--line)"}`,
-          }}
-        >
-          My requests
-        </button>
+      <div style={{ display: "flex", gap: 6 }}>
+        {tabBtn("marketplace", "Fund a loan")}
+        {tabBtn("funded", "My funding")}
+        {tabBtn("mine", "My requests")}
       </div>
 
       {sub === "marketplace" && (
@@ -116,10 +124,7 @@ export function LoansPage() {
                   <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 6 }}>
                     {progress}% funded
                     {(l.fundings?.length ?? 0) > 0 && (
-                      <>
-                        {" "}
-                        · {l.fundings!.map((f) => `@${f.funder?.username ?? "?"}`).join(", ")}
-                      </>
+                      <> · {l.fundings!.map((f) => `@${f.funder?.username ?? "?"}`).join(", ")}</>
                     )}
                   </div>
                   <div
@@ -148,6 +153,93 @@ export function LoansPage() {
         </div>
       )}
 
+      {sub === "funded" && (
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          {myFundings.length === 0 ? (
+            <div className="card" style={{ padding: "18px 16px", fontSize: 13, color: "var(--ink-soft)" }}>
+              You haven&apos;t funded any loans yet. Open <strong>Fund a loan</strong> to get started.
+            </div>
+          ) : (
+            myFundings.map((row) => {
+              const l = row.loan;
+              const meta = statusMeta(l.status);
+              const myReturns = (l.repayments ?? []).flatMap((r) =>
+                (r.distributions ?? []).map((d) => ({
+                  repaymentStatus: r.status,
+                  amount: d.amount,
+                  repaymentId: r.id,
+                })),
+              );
+              return (
+                <div key={row.fundingId} className="card" style={{ padding: "14px 16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 14, fontWeight: 500 }}>@{l.borrower?.username}</span>
+                    <span className="badge" style={{ background: meta.bg, color: meta.fg }}>
+                      {meta.label}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                    {l.purpose || "General purpose loan"} · {pct(l.interestRateApr)} p.a.
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 10,
+                      background: "var(--bg)",
+                      borderRadius: 10,
+                      padding: "10px 12px",
+                      fontSize: 12.5,
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "var(--ink-soft)" }}>You funded</span>
+                      <span className="mono" style={{ fontWeight: 600 }}>
+                        {fmt(row.myAmount)}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                      <span style={{ color: "var(--ink-soft)" }}>Loan size</span>
+                      <span className="mono">{fmt(l.amount)}</span>
+                    </div>
+                    {(l.status === "REPAYING" || l.status === "REPAID") && (
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                        <span style={{ color: "var(--ink-soft)" }}>Outstanding (loan)</span>
+                        <span className="mono">
+                          {fmt(Number(l.principalOwed) + Number(l.interestOwed))}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {myReturns.length > 0 && (
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>Your share of repayments</div>
+                      {myReturns.map((r, i) => {
+                        const badge =
+                          r.repaymentStatus === "APPROVED"
+                            ? { label: "Credited", bg: "var(--green-pale)", fg: "var(--green-deep)" }
+                            : r.repaymentStatus === "REJECTED"
+                              ? { label: "Rejected", bg: "var(--rust-pale)", fg: "var(--rust)" }
+                              : { label: "Pending admin", bg: "var(--amber-pale)", fg: "#7a5a2e" };
+                        return (
+                          <div
+                            key={`${r.repaymentId}-${i}`}
+                            style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5 }}
+                          >
+                            <span className="mono">{fmt(r.amount)}</span>
+                            <span className="badge" style={{ background: badge.bg, color: badge.fg }}>
+                              {badge.label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
       {sub === "mine" && (
         <div style={{ marginTop: 16 }}>
           <button
@@ -165,25 +257,15 @@ export function LoansPage() {
             ) : (
               myLoans.map((l) => {
                 const outstanding = Number(l.principalOwed) + Number(l.interestOwed);
-                const statusMeta =
-                  l.status === "OPEN"
-                    ? { label: "Open for funding", bg: "var(--amber-pale)", fg: "#7a5a2e" }
-                    : l.status === "REPAYING"
-                      ? { label: "Repaying", bg: "#e6f0fb", fg: "#0c447c" }
-                      : l.status === "REPAID"
-                        ? { label: "Fully repaid", bg: "var(--green-pale)", fg: "var(--green-deep)" }
-                        : { label: l.status, bg: "var(--line)", fg: "var(--ink-soft)" };
+                const meta = statusMeta(l.status);
                 return (
                   <div key={l.id} className="card" style={{ padding: "14px 16px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span className="mono" style={{ fontSize: 14 }}>
                         {fmt(l.amount)}
                       </span>
-                      <span
-                        className="badge"
-                        style={{ background: statusMeta.bg, color: statusMeta.fg }}
-                      >
-                        {statusMeta.label}
+                      <span className="badge" style={{ background: meta.bg, color: meta.fg }}>
+                        {meta.label}
                       </span>
                     </div>
                     <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4 }}>
@@ -201,7 +283,6 @@ export function LoansPage() {
                         ).join(" · ")}
                       </div>
                     )}
-
                     {(l.status === "REPAYING" || l.status === "REPAID") && (
                       <div
                         style={{
@@ -298,7 +379,7 @@ export function LoansPage() {
       {repayModal && (
         <AmountModal
           title="Repay loan"
-          balanceLabel={`Outstanding: ${fmt(Number(repayModal.principalOwed) + Number(repayModal.interestOwed))}`}
+          balanceLabel={`Outstanding: ${fmt(Number(repayModal.principalOwed) + Number(repayModal.interestOwed))} (principal ${fmt(repayModal.principalOwed)} + interest ${fmt(repayModal.interestOwed)})`}
           confirmLabel="Repay"
           needsConfirm
           confirmHint="Repayment is held until an admin approves it."

@@ -1,7 +1,11 @@
 import { request } from "./client";
-import type { Loan, LoanRepayment } from "./types";
+import type { Loan, LoanRepayment, MyFunding } from "./types";
 
-export function createLoan(params: { amount: number; purpose?: string; guarantorUsernames: string[] }) {
+export function createLoan(params: {
+  amount: number;
+  purpose?: string;
+  guarantorUsernames: string[];
+}) {
   return request<Loan>("/api/loans", { method: "POST", body: params });
 }
 
@@ -11,6 +15,10 @@ export function marketplace() {
 
 export function mine() {
   return request<Loan[]>("/api/loans/mine");
+}
+
+export function funded() {
+  return request<MyFunding[]>("/api/loans/funded");
 }
 
 export function fund(loanId: string, amount: number) {

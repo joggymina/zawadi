@@ -100,3 +100,10 @@ export interface Offer {
   title: string;
   description: string;
 }
+
+export interface MyFunding {
+  fundingId: string;
+  myAmount: string;
+  fundedAt: string;
+  loan: Loan;
+}
