@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { Decimal } from "@prisma/client/runtime/library";
 import { z } from "zod";
+import { writeAudit } from "../services/audit.service";
 
 export const amountSchema = z.object({
   amount: z.number().positive().max(10_000_000),
@@ -54,6 +55,13 @@ export async function invest(req: Request, res: Response) {
     return account;
   });
 
+  await writeAudit({
+    userId: req.user!.id,
+    action: "INVEST",
+    metadata: { amount },
+    ip: req.ip,
+  });
+
   return res.json({ principalBalance: result.principalBalance });
 }
 
@@ -82,6 +90,13 @@ export async function withdraw(req: Request, res: Response) {
       },
     });
     return updated;
+  });
+
+  await writeAudit({
+    userId: req.user!.id,
+    action: "WITHDRAW",
+    metadata: { amount },
+    ip: req.ip,
   });
 
   return res.json({ principalBalance: result.principalBalance });
