@@ -19,10 +19,12 @@ export async function createLoanRequest(params: {
   const settings = await getAdminSettings();
   const amount = new Decimal(params.amount);
 
-  if (params.guarantorUsernames.includes(""))
+  if (params.guarantorUsernames.includes("")) {
     throw new AppError("Invalid guarantor list.");
-  if (new Set(params.guarantorUsernames).size !== params.guarantorUsernames.length)
+  }
+  if (new Set(params.guarantorUsernames).size !== params.guarantorUsernames.length) {
     throw new AppError("Guarantors must be distinct users.");
+  }
   if (params.guarantorUsernames.length !== settings.guarantorsRequired) {
     throw new AppError(`Exactly ${settings.guarantorsRequired} guarantors are required.`);
   }
@@ -74,11 +76,17 @@ export async function createLoanRequest(params: {
  * Fund an open loan. When the loan becomes fully funded, it transitions
  * to REPAYING and the full amount is disbursed to the borrower in the
  * same DB transaction as the funder's debit — both happen or neither does.
+ *
+ * The loan row is locked with FOR UPDATE so two concurrent funders cannot
+ * both read the same remaining amount and oversubscribe the loan.
  */
 export async function fundLoan(params: { loanId: string; funderId: string; amount: number }) {
   const amount = new Decimal(params.amount);
 
   return prisma.$transaction(async (tx) => {
+    // Serialize concurrent funding attempts on this loan row.
+    await tx.$executeRaw`SELECT id FROM "Loan" WHERE id = ${params.loanId} FOR UPDATE`;
+
     const loan = await tx.loan.findUnique({ where: { id: params.loanId } });
     if (!loan) throw new AppError("Loan not found.", 404);
     if (loan.status !== "OPEN") throw new AppError("This loan is no longer open for funding.", 422);
@@ -98,6 +106,7 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
       where: { userId: params.funderId },
       data: { principalBalance: { decrement: amount } },
     });
+
     await tx.transaction.create({
       data: {
         userId: params.funderId,
@@ -109,7 +118,9 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
       },
     });
 
-    await tx.loanFunding.create({ data: { loanId: loan.id, funderId: params.funderId, amount } });
+    await tx.loanFunding.create({
+      data: { loanId: loan.id, funderId: params.funderId, amount },
+    });
 
     const newFundedAmount = loan.fundedAmount.plus(amount);
     const fullyFunded = newFundedAmount.greaterThanOrEqualTo(loan.amount);
@@ -126,7 +137,9 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
     });
 
     if (fullyFunded) {
-      const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({ where: { userId: loan.borrowerId } });
+      const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({
+        where: { userId: loan.borrowerId },
+      });
       await tx.investmentAccount.update({
         where: { userId: loan.borrowerId },
         data: { principalBalance: { increment: loan.amount } },
@@ -157,7 +170,10 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
   const amount = new Decimal(params.amount);
 
   return prisma.$transaction(async (tx) => {
-    const loan = await tx.loan.findUnique({ where: { id: params.loanId }, include: { fundings: true } });
+    const loan = await tx.loan.findUnique({
+      where: { id: params.loanId },
+      include: { fundings: true },
+    });
     if (!loan) throw new AppError("Loan not found.", 404);
     if (loan.borrowerId !== params.borrowerId) throw new AppError("This isn't your loan.", 403);
     if (loan.status !== "REPAYING") throw new AppError("This loan isn't awaiting repayment.", 422);
@@ -167,7 +183,9 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       throw new AppError(`Outstanding balance is only ${outstanding.toFixed(2)}.`, 422);
     }
 
-    const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({ where: { userId: params.borrowerId } });
+    const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({
+      where: { userId: params.borrowerId },
+    });
     if (amount.greaterThan(borrowerAccount.principalBalance)) {
       throw new AppError("You don't have enough in your own balance to make this repayment.", 422);
     }
@@ -179,7 +197,8 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
 
     const newInterestOwed = loan.interestOwed.minus(interestPaid);
     const newPrincipalOwed = loan.principalOwed.minus(principalPaid);
-    const fullyRepaid = newPrincipalOwed.lessThanOrEqualTo(0.01) && newInterestOwed.lessThanOrEqualTo(0.01);
+    const fullyRepaid =
+      newPrincipalOwed.lessThanOrEqualTo(0.01) && newInterestOwed.lessThanOrEqualTo(0.01);
 
     const totalFunded = loan.fundings.reduce((s, f) => s.plus(f.amount), new Decimal(0));
     const denominator = totalFunded.greaterThan(0) ? totalFunded : loan.amount;
@@ -188,6 +207,7 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       where: { userId: params.borrowerId },
       data: { principalBalance: { decrement: amount } },
     });
+
     await tx.transaction.create({
       data: {
         userId: params.borrowerId,
@@ -217,7 +237,11 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
 
     await tx.loan.update({
       where: { id: loan.id },
-      data: { principalOwed: newPrincipalOwed, interestOwed: newInterestOwed, status: fullyRepaid ? "REPAID" : "REPAYING" },
+      data: {
+        principalOwed: newPrincipalOwed,
+        interestOwed: newInterestOwed,
+        status: fullyRepaid ? "REPAID" : "REPAYING",
+      },
     });
 
     return repayment;
@@ -231,10 +255,14 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
       include: { distributions: true, loan: true },
     });
     if (!repayment) throw new AppError("Repayment not found.", 404);
-    if (repayment.status !== "PENDING") throw new AppError("This repayment has already been reviewed.", 422);
+    if (repayment.status !== "PENDING") {
+      throw new AppError("This repayment has already been reviewed.", 422);
+    }
 
     for (const dist of repayment.distributions) {
-      const funderAccount = await tx.investmentAccount.findUniqueOrThrow({ where: { userId: dist.funderId } });
+      const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
+        where: { userId: dist.funderId },
+      });
       await tx.investmentAccount.update({
         where: { userId: dist.funderId },
         data: { principalBalance: { increment: dist.amount } },
@@ -253,19 +281,26 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
 
     return tx.loanRepayment.update({
       where: { id: repayment.id },
-      data: { status: "APPROVED", reviewedAt: new Date(), reviewedById: params.adminId },
+      data: {
+        status: "APPROVED",
+        reviewedAt: new Date(),
+        reviewedById: params.adminId,
+      },
     });
   });
 }
 
 export async function rejectRepayment(params: { repaymentId: string; adminId: string }) {
   return prisma.$transaction(async (tx) => {
-    const repayment = await tx.loanRepayment.findUnique({ where: { id: params.repaymentId }, include: { loan: true } });
+    const repayment = await tx.loanRepayment.findUnique({
+      where: { id: params.repaymentId },
+      include: { loan: true },
+    });
     if (!repayment) throw new AppError("Repayment not found.", 404);
-    if (repayment.status !== "PENDING") throw new AppError("This repayment has already been reviewed.", 422);
+    if (repayment.status !== "PENDING") {
+      throw new AppError("This repayment has already been reviewed.", 422);
+    }
 
-    // Restore the loan's outstanding balance to what it was before this
-    // repayment attempt, and refund the borrower.
     await tx.loan.update({
       where: { id: repayment.loanId },
       data: {
@@ -275,7 +310,9 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
       },
     });
 
-    const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({ where: { userId: repayment.loan.borrowerId } });
+    const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({
+      where: { userId: repayment.loan.borrowerId },
+    });
     await tx.investmentAccount.update({
       where: { userId: repayment.loan.borrowerId },
       data: { principalBalance: { increment: repayment.amount } },
@@ -293,7 +330,11 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
 
     return tx.loanRepayment.update({
       where: { id: repayment.id },
-      data: { status: "REJECTED", reviewedAt: new Date(), reviewedById: params.adminId },
+      data: {
+        status: "REJECTED",
+        reviewedAt: new Date(),
+        reviewedById: params.adminId,
+      },
     });
   });
 }
