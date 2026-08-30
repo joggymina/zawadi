@@ -4,6 +4,7 @@ import { AppError } from "../middleware/errorHandler";
 import { Decimal } from "@prisma/client/runtime/library";
 import { z } from "zod";
 import { writeAudit } from "../services/audit.service";
+import { assertInvestAllowed, assertWithdrawAllowed } from "../services/kycLimits.service";
 
 export const amountSchema = z.object({
   amount: z.number().positive().max(10_000_000),
@@ -29,14 +30,11 @@ export async function getTransactions(req: Request, res: Response) {
   return res.json(txs);
 }
 
-// NOTE: `invest` here directly credits the ledger. This is intentional
-// while there's no payment rail wired up yet — once Daraja (M-PESA) is
-// integrated, this endpoint should instead create a PENDING PaymentIntent
-// and STK-push the user; the ledger credit happens only from the
-// payment-confirmed webhook handler, never from a client-initiated call.
 export async function invest(req: Request, res: Response) {
   const { amount } = req.body as z.infer<typeof amountSchema>;
   const amt = new Decimal(amount);
+
+  await assertInvestAllowed(req.user!.id, amount);
 
   const result = await prisma.$transaction(async (tx) => {
     const account = await tx.investmentAccount.update({
@@ -68,6 +66,8 @@ export async function invest(req: Request, res: Response) {
 export async function withdraw(req: Request, res: Response) {
   const { amount } = req.body as z.infer<typeof amountSchema>;
   const amt = new Decimal(amount);
+
+  await assertWithdrawAllowed(req.user!.id, amount);
 
   const account = await prisma.investmentAccount.findUnique({ where: { userId: req.user!.id } });
   if (!account) throw new AppError("Account not found.", 404);
