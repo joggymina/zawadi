@@ -2,6 +2,7 @@ export interface AuthUser {
   id: string;
   username: string;
   role: "USER" | "ADMIN";
+  kycStatus: "PENDING" | "VERIFIED" | "REJECTED";
 }
 
 export interface AccountSummary {
@@ -11,8 +12,14 @@ export interface AccountSummary {
 }
 
 export type TxType =
-  | "DEPOSIT" | "WITHDRAWAL" | "INTEREST" | "LOAN_FUND"
-  | "LOAN_RETURN" | "LOAN_DISBURSEMENT" | "LOAN_REPAYMENT" | "ADJUSTMENT";
+  | "DEPOSIT"
+  | "WITHDRAWAL"
+  | "INTEREST"
+  | "LOAN_FUND"
+  | "LOAN_RETURN"
+  | "LOAN_DISBURSEMENT"
+  | "LOAN_REPAYMENT"
+  | "ADJUSTMENT";
 
 export interface Transaction {
   id: string;
@@ -24,7 +31,14 @@ export interface Transaction {
   createdAt: string;
 }
 
-export type LoanStatus = "PENDING_GUARANTORS" | "OPEN" | "REPAYING" | "REPAID" | "DEFAULTED" | "CANCELLED";
+export type LoanStatus =
+  | "PENDING_GUARANTORS"
+  | "OPEN"
+  | "REPAYING"
+  | "REPAID"
+  | "DEFAULTED"
+  | "CANCELLED";
+
 export type RepaymentStatus = "PENDING" | "APPROVED" | "REJECTED";
 
 export interface LoanGuarantor {
