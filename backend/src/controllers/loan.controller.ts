@@ -12,18 +12,6 @@ export const createLoanSchema = z.object({
   packageId: z.string().min(1),
 });
 
-// createLoan — pass packageId:
-  const loan = await loanService.createLoanRequest({
-    borrowerId: req.user!.id,
-    amount: body.amount,
-    purpose: body.purpose,
-    guarantorUsernames: body.guarantorUsernames,
-    packageId: body.packageId,
-  });
-
-// In listMarketplace and listMine includes, add:
-      package: true,
-
 export const fundLoanSchema = z.object({ amount: z.number().positive() });
 export const repayLoanSchema = z.object({ amount: z.number().positive() });
 
@@ -36,6 +24,7 @@ export async function createLoan(req: Request, res: Response) {
     amount: body.amount,
     purpose: body.purpose,
     guarantorUsernames: body.guarantorUsernames,
+    packageId: body.packageId,
   });
   await writeAudit({
     userId: req.user!.id,
@@ -44,6 +33,7 @@ export async function createLoan(req: Request, res: Response) {
       loanId: loan.id,
       amount: body.amount,
       guarantors: body.guarantorUsernames,
+      packageId: body.packageId,
     },
     ip: req.ip,
   });
@@ -54,6 +44,7 @@ export async function listMarketplace(req: Request, res: Response) {
   const loans = await prisma.loan.findMany({
     where: { status: "OPEN", borrowerId: { not: req.user!.id } },
     include: {
+      package: true,
       guarantors: { include: { user: { select: { username: true } } } },
       borrower: { select: { username: true } },
       fundings: {
@@ -70,6 +61,7 @@ export async function listMine(req: Request, res: Response) {
   const loans = await prisma.loan.findMany({
     where: { borrowerId: req.user!.id },
     include: {
+      package: true,
       guarantors: { include: { user: { select: { username: true } } } },
       fundings: {
         include: { funder: { select: { username: true } } },
@@ -134,6 +126,7 @@ export async function listFunded(req: Request, res: Response) {
     include: {
       loan: {
         include: {
+          package: true,
           borrower: { select: { username: true } },
           guarantors: { include: { user: { select: { username: true } } } },
           fundings: {
@@ -153,7 +146,6 @@ export async function listFunded(req: Request, res: Response) {
     },
   });
 
-  // Shape: each row is "my stake" + the loan
   return res.json(
     fundings.map((f) => ({
       fundingId: f.id,

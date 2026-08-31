@@ -12,12 +12,10 @@ import adminRoutes from "./routes/admin.routes";
 import settingsRoutes from "./routes/settings.routes";
 import offersRoutes from "./routes/offers.routes";
 import packagesRoutes from "./routes/packages.routes";
-// ...
 
 export function createApp() {
   const app = express();
 
-  // Required on Railway (reverse proxy) or express-rate-limit throws
   app.set("trust proxy", 1);
 
   app.use(helmet());
@@ -26,7 +24,7 @@ export function createApp() {
       origin: env.CORS_ORIGIN,
       credentials: true,
       exposedHeaders: ["X-Access-Token"],
-    })
+    }),
   );
   app.use(express.json({ limit: "100kb" }));
   app.use(cookieParser());
@@ -41,8 +39,8 @@ export function createApp() {
   app.use("/api/admin", adminRoutes);
   app.use("/api/settings", settingsRoutes);
   app.use("/api/offers", offersRoutes);
+  app.use("/api/packages", packagesRoutes);
 
   app.use(errorHandler);
-  app.use("/api/packages", packagesRoutes);
   return app;
 }

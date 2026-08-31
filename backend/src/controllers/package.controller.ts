@@ -51,6 +51,7 @@ export async function updatePackage(req: Request, res: Response) {
   const body = req.body as z.infer<typeof packageSchema>;
   const existing = await prisma.loanPackage.findUnique({ where: { id: req.params.id } });
   if (!existing) throw new AppError("Package not found.", 404);
+
   const pkg = await prisma.loanPackage.update({
     where: { id: req.params.id },
     data: {
@@ -71,15 +72,17 @@ export async function updatePackage(req: Request, res: Response) {
 }
 
 export async function deletePackage(req: Request, res: Response) {
-  // Soft-delete: deactivate so historical loans keep the relation
-  const pkg = await prisma.loanPackage.update({
+  const existing = await prisma.loanPackage.findUnique({ where: { id: req.params.id } });
+  if (!existing) throw new AppError("Package not found.", 404);
+
+  await prisma.loanPackage.update({
     where: { id: req.params.id },
     data: { active: false },
   });
   await writeAudit({
     userId: req.user!.id,
     action: "ADMIN_PACKAGE_DEACTIVATE",
-    metadata: { id: pkg.id },
+    metadata: { id: req.params.id },
     ip: req.ip,
   });
   return res.status(204).send();
