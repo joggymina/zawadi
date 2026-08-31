@@ -9,6 +9,15 @@ function sortPackages(list: LoanPackage[]) {
   return [...list].sort((a, b) => a.durationHours - b.durationHours);
 }
 
+type ConfirmState =
+  | null
+  | {
+      title: string;
+      body: string;
+      confirmLabel: string;
+      onConfirm: () => Promise<void>;
+    };
+
 export function AdminPage() {
   const showToast = useToast();
   const [settings, setSettings] = useState<AdminSettings | null>(null);
@@ -22,7 +31,9 @@ export function AdminPage() {
     graceHours: "24",
     interestRateApr: "33",
   });
-  const [bulkRate, setBulkRate] = useState("33");
+  const [rateDrafts, setRateDrafts] = useState<Record<string, string>>({});
+  const [confirm, setConfirm] = useState<ConfirmState>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [error, setError] = useState("");
 
   async function load() {
@@ -36,7 +47,13 @@ export function AdminPage() {
       setSettings(s);
       setOffers(o);
       setPending(p);
-      setPackages(sortPackages(pkgs));
+      const sorted = sortPackages(pkgs);
+      setPackages(sorted);
+      const drafts: Record<string, string> = {};
+      sorted.forEach((pkg) => {
+        drafts[pkg.id] = String(Number(pkg.interestRateApr ?? 0));
+      });
+      setRateDrafts(drafts);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -88,7 +105,75 @@ export function AdminPage() {
     }
   }
 
-  async function addPackage() {
+  function askConfirm(state: Exclude<ConfirmState, null>) {
+    setConfirm(state);
+  }
+
+  async function runConfirm() {
+    if (!confirm) return;
+    setConfirmBusy(true);
+    try {
+      await confirm.onConfirm();
+      setConfirm(null);
+    } catch (err) {
+      showToast(errorMessage(err));
+    } finally {
+      setConfirmBusy(false);
+    }
+  }
+
+  /** Changing any package rate applies the same APR to every package (keeps rates in sync). */
+  function requestRateChange(sourceName: string, rateStr: string) {
+    const rate = parseFloat(rateStr);
+    if (Number.isNaN(rate) || rate < 0 || rate > 100) {
+      showToast("Enter a rate between 0 and 100");
+      return;
+    }
+    askConfirm({
+      title: "Update interest rates?",
+      body: `Set every loan package to ${rate.toFixed(2)}% p.a.?\n\nTriggered from “${sourceName}”.\nThis keeps package rates in sync. Only new loans use the new rate.`,
+      confirmLabel: "Save all rates",
+      onConfirm: async () => {
+        const res = await adminApi.bulkSetPackageRates(rate);
+        const sorted = sortPackages(res.packages);
+        setPackages(sorted);
+        const drafts: Record<string, string> = {};
+        sorted.forEach((pkg) => {
+          drafts[pkg.id] = String(Number(pkg.interestRateApr ?? rate));
+        });
+        setRateDrafts(drafts);
+        showToast(`All packages set to ${rate.toFixed(2)}% p.a. (${res.count} updated)`);
+      },
+    });
+  }
+
+  function requestDeactivate(p: LoanPackage) {
+    askConfirm({
+      title: "Deactivate package?",
+      body: `“${p.name}” will no longer appear when users request a loan. Existing loans are unchanged.`,
+      confirmLabel: "Deactivate",
+      onConfirm: async () => {
+        const updated = await adminApi.deletePackage(p.id);
+        setPackages((list) => sortPackages(list.map((x) => (x.id === p.id ? updated : x))));
+        showToast(`${p.name} deactivated`);
+      },
+    });
+  }
+
+  function requestActivate(p: LoanPackage) {
+    askConfirm({
+      title: "Activate package?",
+      body: `“${p.name}” will be available again for new loan requests at ${Number(p.interestRateApr ?? 0).toFixed(2)}% p.a.`,
+      confirmLabel: "Activate",
+      onConfirm: async () => {
+        const updated = await adminApi.activatePackage(p.id);
+        setPackages((list) => sortPackages(list.map((x) => (x.id === p.id ? updated : x))));
+        showToast(`${p.name} activated`);
+      },
+    });
+  }
+
+  function requestAddPackage() {
     const durationHours = parseInt(newPkg.durationHours, 10);
     const graceHours = parseInt(newPkg.graceHours, 10) || 0;
     const interestRateApr = parseFloat(newPkg.interestRateApr);
@@ -100,112 +185,102 @@ export function AdminPage() {
       showToast("Enter a valid interest rate");
       return;
     }
-    try {
-      const pkg = await adminApi.createPackage({
-        name: newPkg.name.trim(),
-        durationHours,
-        graceHours,
-        interestRateApr,
-        active: true,
-        sortOrder: durationHours,
-      });
-      setPackages((list) => sortPackages([...list, pkg]));
-      setNewPkg({ name: "", durationHours: "168", graceHours: "24", interestRateApr: "33" });
-      showToast(
-        `Package created: ${pkg.name} at ${Number(pkg.interestRateApr).toFixed(2)}% p.a.`,
-      );
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
-  }
-
-  async function savePackageRate(p: LoanPackage, rateStr: string) {
-    const rate = parseFloat(rateStr);
-    if (Number.isNaN(rate) || rate < 0) {
-      showToast("Invalid rate");
-      return;
-    }
-    try {
-      const updated = await adminApi.updatePackage(p.id, {
-        name: p.name,
-        durationHours: p.durationHours,
-        graceHours: p.graceHours,
-        interestRateApr: rate,
-        active: p.active,
-      });
-      setPackages((list) => sortPackages(list.map((x) => (x.id === p.id ? updated : x))));
-      showToast(`Saved ${p.name}: ${rate.toFixed(2)}% p.a.`);
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
-  }
-
-  async function deactivatePackage(p: LoanPackage) {
-    try {
-      const updated = await adminApi.deletePackage(p.id);
-      setPackages((list) => sortPackages(list.map((x) => (x.id === p.id ? updated : x))));
-      showToast(`${p.name} deactivated`);
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
-  }
-
-  async function activatePkg(p: LoanPackage) {
-    try {
-      const updated = await adminApi.activatePackage(p.id);
-      setPackages((list) => sortPackages(list.map((x) => (x.id === p.id ? updated : x))));
-      showToast(`${p.name} activated`);
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
-  }
-
-  async function applyBulkRate() {
-    const rate = parseFloat(bulkRate);
-    if (Number.isNaN(rate) || rate < 0) {
-      showToast("Enter a valid rate");
-      return;
-    }
-    if (
-      !window.confirm(
-        `Set ALL packages to ${rate.toFixed(2)}% p.a.? This only affects new loans under each package.`,
-      )
-    ) {
-      return;
-    }
-    try {
-      const res = await adminApi.bulkSetPackageRates(rate);
-      setPackages(sortPackages(res.packages));
-      showToast(`Saved ${rate.toFixed(2)}% p.a. on ${res.count} package(s)`);
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
+    askConfirm({
+      title: "Add package?",
+      body: `Create “${newPkg.name.trim()}” (${formatDuration(durationHours)}) at ${interestRateApr.toFixed(2)}% p.a.?`,
+      confirmLabel: "Add package",
+      onConfirm: async () => {
+        const pkg = await adminApi.createPackage({
+          name: newPkg.name.trim(),
+          durationHours,
+          graceHours,
+          interestRateApr,
+          active: true,
+          sortOrder: durationHours,
+        });
+        setPackages((list) => sortPackages([...list, pkg]));
+        setRateDrafts((d) => ({ ...d, [pkg.id]: String(interestRateApr) }));
+        setNewPkg({ name: "", durationHours: "168", graceHours: "24", interestRateApr: "33" });
+        showToast(`Added ${pkg.name} at ${interestRateApr.toFixed(2)}% p.a.`);
+      },
+    });
   }
 
   async function approve(id: string) {
-    if (!window.confirm("Approve this repayment? Funders will be credited immediately.")) return;
-    try {
-      await adminApi.approveRepayment(id);
-      setPending((p) => p.filter((r) => r.id !== id));
-      showToast("Approved — funders credited");
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
+    askConfirm({
+      title: "Approve repayment?",
+      body: "Funders will be credited immediately.",
+      confirmLabel: "Approve",
+      onConfirm: async () => {
+        await adminApi.approveRepayment(id);
+        setPending((p) => p.filter((r) => r.id !== id));
+        showToast("Approved — funders credited");
+      },
+    });
   }
 
   async function reject(id: string) {
-    if (!window.confirm("Reject this repayment? The borrower will be refunded.")) return;
-    try {
-      await adminApi.rejectRepayment(id);
-      setPending((p) => p.filter((r) => r.id !== id));
-      showToast("Rejected — borrower refunded");
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
+    askConfirm({
+      title: "Reject repayment?",
+      body: "The borrower will be refunded.",
+      confirmLabel: "Reject",
+      onConfirm: async () => {
+        await adminApi.rejectRepayment(id);
+        setPending((p) => p.filter((r) => r.id !== id));
+        showToast("Rejected — borrower refunded");
+      },
+    });
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {confirm && (
+        <div
+          className="modal-backdrop"
+          style={{ zIndex: 1000 }}
+          onClick={() => !confirmBusy && setConfirm(null)}
+        >
+          <div
+            className="modal-sheet"
+            style={{ maxWidth: 400 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="display" style={{ fontSize: 17, fontWeight: 500 }}>
+              {confirm.title}
+            </div>
+            <div
+              style={{
+                marginTop: 12,
+                fontSize: 13.5,
+                color: "var(--ink-soft)",
+                whiteSpace: "pre-wrap",
+                lineHeight: 1.45,
+              }}
+            >
+              {confirm.body}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+              <button
+                className="btn btn-outline"
+                style={{ flex: 1, padding: "10px 0" }}
+                disabled={confirmBusy}
+                onClick={() => setConfirm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1, padding: "10px 0" }}
+                disabled={confirmBusy}
+                onClick={runConfirm}
+              >
+                {confirmBusy ? "Saving…" : confirm.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section>
         <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
           Pending loan repayments
@@ -284,89 +359,86 @@ export function AdminPage() {
         <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
           Loan packages
         </div>
-        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 }}>
-          Ordered by duration. Each package has its own interest rate for new loans.
+        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 10 }}>
+          Sorted by duration. Rates stay in sync: saving a rate on any package updates{" "}
+          <strong>all</strong> packages after you confirm.
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
-          <input
-            className="field-input mono"
-            type="number"
-            placeholder="Bulk APR %"
-            value={bulkRate}
-            onChange={(e) => setBulkRate(e.target.value)}
-            style={{ flex: 1 }}
-          />
-          <button
-            className="btn btn-outline"
-            style={{ padding: "8px 12px", whiteSpace: "nowrap", fontSize: 12.5 }}
-            onClick={applyBulkRate}
-          >
-            Apply to all
-          </button>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {packages.map((p) => (
             <div
               key={p.id}
               className="card"
-              style={{ padding: "10px 12px", opacity: p.active ? 1 : 0.65 }}
+              style={{
+                padding: "12px 14px",
+                opacity: p.active ? 1 : 0.7,
+                border: p.active ? undefined : "1px dashed var(--line)",
+              }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  gap: 8,
-                }}
-              >
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 500 }}>
-                    {p.name} {!p.active && "(inactive)"}
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500 }}>
+                    {p.name}
+                    {!p.active && (
+                      <span style={{ fontWeight: 400, color: "var(--ink-soft)" }}> (inactive)</span>
+                    )}
                   </div>
-                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>
+                  <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 2 }}>
                     {formatDuration(p.durationHours)}
                     {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""}
+                    {" · "}
+                    {Number(p.interestRateApr ?? 0).toFixed(2)}% p.a.
                   </div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 8,
+                      marginTop: 10,
+                      alignItems: "center",
+                    }}
+                  >
                     <input
                       className="field-input mono"
                       type="number"
-                      defaultValue={Number(p.interestRateApr ?? 0)}
-                      key={`${p.id}-${p.interestRateApr}`}
-                      id={`rate-${p.id}`}
-                      style={{ width: 88, padding: "6px 8px", fontSize: 12 }}
+                      step="0.1"
+                      min={0}
+                      max={100}
+                      value={rateDrafts[p.id] ?? ""}
+                      onChange={(e) =>
+                        setRateDrafts((d) => ({ ...d, [p.id]: e.target.value }))
+                      }
+                      style={{ width: 96, padding: "7px 8px", fontSize: 13 }}
+                      aria-label={`Rate for ${p.name}`}
                     />
-                    <span style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>% p.a.</span>
+                    <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>% p.a.</span>
                     <button
                       className="btn btn-outline"
-                      style={{ padding: "5px 10px", fontSize: 11 }}
-                      onClick={() => {
-                        const el = document.getElementById(
-                          `rate-${p.id}`,
-                        ) as HTMLInputElement | null;
-                        savePackageRate(p, el?.value ?? "");
-                      }}
+                      style={{ padding: "6px 12px", fontSize: 12 }}
+                      onClick={() =>
+                        requestRateChange(p.name, rateDrafts[p.id] ?? String(p.interestRateApr))
+                      }
                     >
                       Save rate
                     </button>
                   </div>
                 </div>
-                <div>
+
+                <div style={{ flexShrink: 0 }}>
                   {p.active ? (
                     <button
                       className="btn btn-outline"
-                      style={{ padding: "6px 10px", fontSize: 11.5 }}
-                      onClick={() => deactivatePackage(p)}
+                      style={{ padding: "7px 12px", fontSize: 12 }}
+                      onClick={() => requestDeactivate(p)}
                     >
                       Deactivate
                     </button>
                   ) : (
                     <button
                       className="btn btn-primary"
-                      style={{ padding: "6px 10px", fontSize: 11.5 }}
-                      onClick={() => activatePkg(p)}
+                      style={{ padding: "7px 12px", fontSize: 12 }}
+                      onClick={() => requestActivate(p)}
                     >
                       Activate
                     </button>
@@ -377,7 +449,8 @@ export function AdminPage() {
           ))}
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>Add package</div>
           <input
             className="field-input"
             placeholder="Package name (e.g. 7 days)"
@@ -391,7 +464,7 @@ export function AdminPage() {
               placeholder="Hours"
               value={newPkg.durationHours}
               onChange={(e) => setNewPkg((x) => ({ ...x, durationHours: e.target.value }))}
-              style={{ flex: 1, minWidth: 72 }}
+              style={{ flex: 1, minWidth: 70 }}
             />
             <input
               className="field-input mono"
@@ -399,7 +472,7 @@ export function AdminPage() {
               placeholder="Grace h"
               value={newPkg.graceHours}
               onChange={(e) => setNewPkg((x) => ({ ...x, graceHours: e.target.value }))}
-              style={{ flex: 1, minWidth: 72 }}
+              style={{ flex: 1, minWidth: 70 }}
             />
             <input
               className="field-input mono"
@@ -407,9 +480,13 @@ export function AdminPage() {
               placeholder="APR %"
               value={newPkg.interestRateApr}
               onChange={(e) => setNewPkg((x) => ({ ...x, interestRateApr: e.target.value }))}
-              style={{ flex: 1, minWidth: 72 }}
+              style={{ flex: 1, minWidth: 70 }}
             />
-            <button className="btn btn-primary" style={{ padding: "0 14px" }} onClick={addPackage}>
+            <button
+              className="btn btn-primary"
+              style={{ padding: "0 14px" }}
+              onClick={requestAddPackage}
+            >
               Add
             </button>
           </div>
@@ -427,7 +504,7 @@ export function AdminPage() {
             onSave={(v) => saveSettings({ investAnnualRatePct: v })}
           />
           <NumField
-            label="Default loan rate for new packages only (% p.a.)"
+            label="Default loan rate hint for new packages (% p.a.)"
             value={Number(settings.loanAnnualRatePct)}
             onSave={(v) => saveSettings({ loanAnnualRatePct: v })}
           />
