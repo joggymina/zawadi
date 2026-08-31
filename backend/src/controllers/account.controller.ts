@@ -5,6 +5,7 @@ import { Decimal } from "@prisma/client/runtime/library";
 import { z } from "zod";
 import { writeAudit } from "../services/audit.service";
 import { assertInvestAllowed, assertWithdrawAllowed } from "../services/kycLimits.service";
+import { getAdminSettings } from "../services/adminSettings.service";
 
 export const amountSchema = z.object({
   amount: z.number().positive().max(10_000_000),
@@ -69,6 +70,11 @@ export async function withdraw(req: Request, res: Response) {
 
   await assertWithdrawAllowed(req.user!.id, amount);
 
+  const settings = await getAdminSettings();
+  const feePct = new Decimal(settings.withdrawFeePct);
+  const fee = amt.mul(feePct).div(100).toDecimalPlaces(2);
+  const net = amt.minus(fee);
+
   const account = await prisma.investmentAccount.findUnique({ where: { userId: req.user!.id } });
   if (!account) throw new AppError("Account not found.", 404);
   if (amt.greaterThan(account.principalBalance)) {
@@ -80,13 +86,14 @@ export async function withdraw(req: Request, res: Response) {
       where: { userId: req.user!.id },
       data: { principalBalance: { decrement: amt } },
     });
+    const balanceAfter = updated.principalBalance.plus(updated.interestBalance);
     await tx.transaction.create({
       data: {
         userId: req.user!.id,
         type: "WITHDRAWAL",
         amount: amt,
-        balanceAfter: updated.principalBalance.plus(updated.interestBalance),
-        note: "Manual withdrawal (pre-payment-integration)",
+        balanceAfter,
+        note: `Withdrawal gross ${amt.toFixed(2)}; platform fee ${fee.toFixed(2)} (${feePct.toFixed(2)}%); net ${net.toFixed(2)}`,
       },
     });
     return updated;
@@ -95,9 +102,20 @@ export async function withdraw(req: Request, res: Response) {
   await writeAudit({
     userId: req.user!.id,
     action: "WITHDRAW",
-    metadata: { amount },
+    metadata: {
+      amount: Number(amt),
+      fee: Number(fee),
+      net: Number(net),
+      feePct: Number(feePct),
+    },
     ip: req.ip,
   });
 
-  return res.json({ principalBalance: result.principalBalance });
+  return res.json({
+    principalBalance: result.principalBalance,
+    amount: amt,
+    fee,
+    net,
+    feePct,
+  });
 }

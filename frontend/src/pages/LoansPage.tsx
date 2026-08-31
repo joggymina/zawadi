@@ -218,7 +218,7 @@ export function LoansPage() {
                             ? { label: "Credited", bg: "var(--green-pale)", fg: "var(--green-deep)" }
                             : r.repaymentStatus === "REJECTED"
                               ? { label: "Rejected", bg: "var(--rust-pale)", fg: "var(--rust)" }
-                              : { label: "Pending admin", bg: "var(--amber-pale)", fg: "#7a5a2e" };
+                              : { label: "Pending approval", bg: "var(--amber-pale)", fg: "#7a5a2e" };
                         return (
                           <div
                             key={`${r.repaymentId}-${i}`}
@@ -325,7 +325,7 @@ export function LoansPage() {
                                         fg: "var(--rust)",
                                       }
                                     : {
-                                        label: "Awaiting admin approval",
+                                        label: "Awaiting approval",
                                         bg: "var(--amber-pale)",
                                         fg: "#7a5a2e",
                                       };
@@ -382,12 +382,12 @@ export function LoansPage() {
           balanceLabel={`Outstanding: ${fmt(Number(repayModal.principalOwed) + Number(repayModal.interestOwed))} (principal ${fmt(repayModal.principalOwed)} + interest ${fmt(repayModal.interestOwed)})`}
           confirmLabel="Repay"
           needsConfirm
-          confirmHint="Repayment is held until an admin approves it."
+          confirmHint="Repayment is held awaiting approval."
           onClose={() => setRepayModal(null)}
           onSubmit={async (amt) => {
             await loansApi.repay(repayModal.id, amt);
             await load();
-            showToast(`Repaid ${fmt(amt)} — awaiting admin approval`);
+            showToast(`Repaid ${fmt(amt)} — awaiting approval`);
             setRepayModal(null);
           }}
         />

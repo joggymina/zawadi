@@ -125,14 +125,17 @@ export function HomePage() {
 {modal === "withdraw" && (
   <AmountModal
     title="Withdraw"
-    balanceLabel={`Available balance: ${fmt(account.principalBalance)}`}
+    balanceLabel={`Available balance: ${fmt(account.principalBalance)} · ${Number(settings.withdrawFeePct ?? 2.5)}% fee applies`}
     confirmLabel="Withdraw"
     needsConfirm
+    confirmHint={`${Number(settings.withdrawFeePct ?? 2.5)}% of the amount is deducted as a platform fee.`}
     onClose={() => setModal(null)}
     onSubmit={async (amt) => {
+      const feePct = Number(settings.withdrawFeePct ?? 2.5);
+      const fee = (amt * feePct) / 100;
       await accountApi.withdraw(amt);
       await load();
-      showToast(`Withdrew ${fmt(amt)}`);
+      showToast(`Withdrew ${fmt(amt)} (fee ${fmt(fee)})`);
       setModal(null);
     }}
   />

@@ -93,6 +93,8 @@ export interface AdminSettings {
   loanAnnualRatePct: string;
   guarantorsRequired: number;
   guarantorCoverageExtraPct: string;
+  withdrawFeePct: string;
+  platformInterestSharePct: string;
 }
 
 export interface Offer {

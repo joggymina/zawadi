@@ -40,7 +40,7 @@ export function AdminLayout() {
     fontSize: 13,
     fontWeight: isActive ? 600 : 500,
     color: isActive ? "var(--green-deep)" : "var(--ink-soft)",
-    textDecoration: "none",
+    textDecoration: "none" as const,
     padding: "4px 0",
     borderBottom: isActive ? "2px solid var(--green)" : "2px solid transparent",
   });
@@ -80,6 +80,17 @@ export function AdminLayout() {
             </Link>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <Link
+              to="/"
+              style={{
+                fontSize: 12.5,
+                color: "var(--green-deep)",
+                fontWeight: 500,
+                textDecoration: "none",
+              }}
+            >
+              Open app →
+            </Link>
             <div
               style={{ position: "relative", display: "flex" }}
               title={

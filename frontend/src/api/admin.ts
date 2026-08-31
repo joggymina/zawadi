@@ -21,6 +21,8 @@ export function updateSettings(
     loanAnnualRatePct: number;
     guarantorsRequired: number;
     guarantorCoverageExtraPct: number;
+    withdrawFeePct: number;
+    platformInterestSharePct: number;
   }>,
 ) {
   return request<AdminSettings>("/api/admin/settings", { method: "PUT", body: patch });

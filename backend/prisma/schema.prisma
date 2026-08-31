@@ -251,6 +251,10 @@ model AdminSettings {
   loanAnnualRatePct         Decimal  @db.Decimal(6, 3) @default(18)
   guarantorsRequired        Int      @default(5)
   guarantorCoverageExtraPct Decimal  @db.Decimal(6, 3) @default(5)
+  /// Percent of each withdrawal taken as platform fee (e.g. 2.5 = 2.5%).
+  withdrawFeePct            Decimal  @db.Decimal(6, 3) @default(2.5)
+  /// Percent of loan interest kept by the platform when repayments are distributed (wired in a later phase).
+  platformInterestSharePct  Decimal  @db.Decimal(6, 3) @default(10)
   updatedAt                 DateTime @updatedAt
 }
 

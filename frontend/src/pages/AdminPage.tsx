@@ -1,31 +1,28 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import * as adminApi from "../api/admin";
 import type { AdminSettings, Offer, LoanRepayment } from "../api/types";
 import { fmt, errorMessage } from "../utils/format";
 import { useToast } from "../context/ToastContext";
-import { Link } from "react-router-dom";
 
 export function AdminPage() {
   const showToast = useToast();
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [pending, setPending] = useState<LoanRepayment[]>([]);
-  const [users, setUsers] = useState<adminApi.AdminUser[]>([]);
   const [newOffer, setNewOffer] = useState({ title: "", description: "" });
   const [error, setError] = useState("");
 
   async function load() {
     try {
-      const [s, o, p, u] = await Promise.all([
+      const [s, o, p] = await Promise.all([
         adminApi.getSettings(),
         adminApi.listOffers(),
         adminApi.listPendingRepayments(),
-        adminApi.listUsers(),
       ]);
       setSettings(s);
       setOffers(o);
       setPending(p);
-      setUsers(u);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -44,6 +41,8 @@ export function AdminPage() {
       loanAnnualRatePct: number;
       guarantorsRequired: number;
       guarantorCoverageExtraPct: number;
+      withdrawFeePct: number;
+      platformInterestSharePct: number;
     }>,
   ) {
     try {
@@ -92,20 +91,6 @@ export function AdminPage() {
       await adminApi.rejectRepayment(id);
       setPending((p) => p.filter((r) => r.id !== id));
       showToast("Rejected — borrower refunded");
-    } catch (err) {
-      showToast(errorMessage(err));
-    }
-  }
-
-  async function changeKyc(id: string, kycStatus: "PENDING" | "VERIFIED" | "REJECTED") {
-    try {
-      const updated = await adminApi.setUserKyc(id, kycStatus);
-      setUsers((list) =>
-        list.map((x) =>
-          x.id === id ? { ...x, kycStatus: updated.kycStatus as typeof x.kycStatus } : x,
-        ),
-      );
-      showToast(`@${updated.username} → ${updated.kycStatus}`);
     } catch (err) {
       showToast(errorMessage(err));
     }
@@ -171,30 +156,30 @@ export function AdminPage() {
         )}
       </section>
 
-<section>
-  <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
-    Users &amp; KYC
-  </div>
-  <Link
-    to="/admin/users"
-    className="card"
-    style={{
-      display: "block",
-      padding: "14px 16px",
-      textDecoration: "none",
-      color: "inherit",
-    }}
-  >
-    <div style={{ fontSize: 14, fontWeight: 500 }}>Open user list →</div>
-    <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
-      Search, filter by status, and update verification
-    </div>
-  </Link>
-</section>
+      <section>
+        <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
+          Users &amp; KYC
+        </div>
+        <Link
+          to="/admin/users"
+          className="card"
+          style={{
+            display: "block",
+            padding: "14px 16px",
+            textDecoration: "none",
+            color: "inherit",
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 500 }}>Open user list →</div>
+          <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
+            Search, filter by status, and update verification
+          </div>
+        </Link>
+      </section>
 
       <section>
         <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
-          Rates &amp; rules
+          Rates &amp; fees
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <NumField
@@ -208,6 +193,16 @@ export function AdminPage() {
             onSave={(v) => saveSettings({ loanAnnualRatePct: v })}
           />
           <NumField
+            label="Withdrawal fee (%)"
+            value={Number(settings.withdrawFeePct ?? 2.5)}
+            onSave={(v) => saveSettings({ withdrawFeePct: v })}
+          />
+          <NumField
+            label="Platform share of loan interest (%)"
+            value={Number(settings.platformInterestSharePct ?? 10)}
+            onSave={(v) => saveSettings({ platformInterestSharePct: v })}
+          />
+          <NumField
             label="Guarantors required per loan"
             value={settings.guarantorsRequired}
             onSave={(v) => saveSettings({ guarantorsRequired: Math.max(1, Math.round(v)) })}
@@ -217,6 +212,9 @@ export function AdminPage() {
             value={Number(settings.guarantorCoverageExtraPct)}
             onSave={(v) => saveSettings({ guarantorCoverageExtraPct: v })}
           />
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 8 }}>
+          Platform interest share is stored now and applied when repayment distribution is upgraded.
         </div>
       </section>
 

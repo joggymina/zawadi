@@ -11,6 +11,8 @@ export const updateSettingsSchema = z.object({
   loanAnnualRatePct: z.number().min(0).max(100).optional(),
   guarantorsRequired: z.number().int().min(1).max(20).optional(),
   guarantorCoverageExtraPct: z.number().min(0).max(200).optional(),
+  withdrawFeePct: z.number().min(0).max(100).optional(),
+  platformInterestSharePct: z.number().min(0).max(100).optional(),
 });
 
 export const offerSchema = z.object({
