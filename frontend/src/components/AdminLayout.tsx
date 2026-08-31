@@ -133,6 +133,10 @@ export function AdminLayout() {
           <NavLink to="/admin/users" style={navStyle}>
             Users &amp; KYC
           </NavLink>
+          <NavLink to="/admin/packages" style={navStyle}>
+            Loan packages
+          </NavLink>
+
         </nav>
       </header>
       <main style={{ maxWidth: 640, margin: "0 auto", padding: "24px 20px 60px" }}>

@@ -13,6 +13,8 @@ import { AccountPage } from "./pages/AccountPage";
 import { AdminPage } from "./pages/AdminPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 
+import { AdminPackagesPage } from "./pages/AdminPackagesPage";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -33,9 +35,17 @@ export default function App() {
               <Route index element={<AdminPage />} />
               <Route path="users" element={<AdminUsersPage />} />
             </Route>
+// under AdminLayout routes:
+            <Route path="/admin" element={<AdminLayout />}>
+              <Route index element={<AdminPage />} />
+              <Route path="users" element={<AdminUsersPage />} />
+              <Route path="packages" element={<AdminPackagesPage />} />
+            </Route>
+            
           </Routes>
         </ToastProvider>
       </AuthProvider>
     </BrowserRouter>
   );
 }
+

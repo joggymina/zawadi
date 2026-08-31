@@ -36,32 +36,20 @@ export function AdminPage() {
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [error, setError] = useState("");
 
-  async function load() {
-    try {
-      const [s, o, p, pkgs] = await Promise.all([
-        adminApi.getSettings(),
-        adminApi.listOffers(),
-        adminApi.listPendingRepayments(),
-        adminApi.listPackages(),
-      ]);
-      setSettings(s);
-      setOffers(o);
-      setPending(p);
-      const sorted = sortPackages(pkgs);
-      setPackages(sorted);
-      const drafts: Record<string, string> = {};
-      sorted.forEach((pkg) => {
-        drafts[pkg.id] = String(Number(pkg.interestRateApr ?? 0));
-      });
-      setRateDrafts(drafts);
-      setNewPkg((x) => ({
-        ...x,
-        interestRateApr: String(Number(s.loanAnnualRatePct ?? 33)),
-      }));
-    } catch (err) {
-      setError(errorMessage(err));
-    }
+async function load() {
+  try {
+    const [s, o, p] = await Promise.all([
+      adminApi.getSettings(),
+      adminApi.listOffers(),
+      adminApi.listPendingRepayments(),
+    ]);
+    setSettings(s);
+    setOffers(o);
+    setPending(p);
+  } catch (err) {
+    setError(errorMessage(err));
   }
+}
 
   useEffect(() => {
     load();
@@ -405,200 +393,21 @@ export function AdminPage() {
         <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
           Loan packages
         </div>
-        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 10 }}>
-          Sorted by duration. Saving a rate updates <strong>all</strong> packages so rates stay
-          balanced (no leakage).
-        </div>
-
-        {packages.length > 0 && (!ratesInSync || !matchesDefault) && (
-          <div
-            style={{
-              background: "var(--amber-pale)",
-              border: "1px solid #e0c080",
-              borderRadius: 10,
-              padding: "10px 12px",
-              marginBottom: 12,
-              fontSize: 12.5,
-              color: "#7a5a2e",
-              lineHeight: 1.45,
-            }}
-          >
-            {!ratesInSync ? (
-              <>
-                <strong>Rate leakage detected.</strong> Packages are not on the same APR (
-                {uniqueRates.map((r) => `${r}%`).join(", ")}). New loans may get inconsistent
-                rates. Use <strong>Save rate</strong> on any package or{" "}
-                <strong>Reset to default</strong>.
-              </>
-            ) : (
-              <>
-                <strong>Rates differ from default.</strong> Packages are at{" "}
-                {Number(syncedRate).toFixed(2)}% p.a., but the default loan rate is{" "}
-                {defaultLoanRate.toFixed(2)}% p.a. Reset if you want them aligned.
-              </>
-            )}
+        <Link
+          to="/admin/packages"
+          className="card"
+          style={{
+            display: "block",
+            padding: "14px 16px",
+            textDecoration: "none",
+            color: "inherit",
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 500 }}>Manage packages →</div>
+          <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
+            Terms, interest rates, activate/deactivate, reset to default
           </div>
-        )}
-
-        {packages.length > 0 && ratesInSync && matchesDefault && (
-          <div
-            style={{
-              background: "var(--green-pale)",
-              borderRadius: 10,
-              padding: "8px 12px",
-              marginBottom: 12,
-              fontSize: 12.5,
-              color: "var(--green-deep)",
-            }}
-          >
-            All packages balanced at {defaultLoanRate.toFixed(2)}% p.a. (matches default).
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-          <button
-            className="btn btn-outline"
-            style={{ padding: "8px 14px", fontSize: 12.5 }}
-            onClick={requestResetToDefault}
-            disabled={packages.length === 0}
-          >
-            Reset to default ({defaultLoanRate.toFixed(2)}%)
-          </button>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {packages.map((p) => (
-            <div
-              key={p.id}
-              className="card"
-              style={{
-                padding: "12px 14px",
-                opacity: p.active ? 1 : 0.7,
-                border: p.active ? undefined : "1px dashed var(--line)",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>
-                    {p.name}
-                    {!p.active && (
-                      <span style={{ fontWeight: 400, color: "var(--ink-soft)" }}>
-                        {" "}
-                        (inactive)
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 2 }}>
-                    {formatDuration(p.durationHours)}
-                    {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""}
-                    {" · "}
-                    {Number(p.interestRateApr ?? 0).toFixed(2)}% p.a.
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 8,
-                      marginTop: 10,
-                      alignItems: "center",
-                    }}
-                  >
-                    <input
-                      className="field-input mono"
-                      type="number"
-                      step="0.1"
-                      min={0}
-                      max={100}
-                      value={rateDrafts[p.id] ?? ""}
-                      onChange={(e) =>
-                        setRateDrafts((d) => ({ ...d, [p.id]: e.target.value }))
-                      }
-                      style={{ width: 96, padding: "7px 8px", fontSize: 13 }}
-                      aria-label={`Rate for ${p.name}`}
-                    />
-                    <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>% p.a.</span>
-                    <button
-                      className="btn btn-outline"
-                      style={{ padding: "6px 12px", fontSize: 12 }}
-                      onClick={() =>
-                        requestRateChange(
-                          p.name,
-                          rateDrafts[p.id] ?? String(p.interestRateApr),
-                        )
-                      }
-                    >
-                      Save rate
-                    </button>
-                  </div>
-                </div>
-
-                <div style={{ flexShrink: 0 }}>
-                  {p.active ? (
-                    <button
-                      className="btn btn-outline"
-                      style={{ padding: "7px 12px", fontSize: 12 }}
-                      onClick={() => requestDeactivate(p)}
-                    >
-                      Deactivate
-                    </button>
-                  ) : (
-                    <button
-                      className="btn btn-primary"
-                      style={{ padding: "7px 12px", fontSize: 12 }}
-                      onClick={() => requestActivate(p)}
-                    >
-                      Activate
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>Add package</div>
-          <input
-            className="field-input"
-            placeholder="Package name (e.g. 7 days)"
-            value={newPkg.name}
-            onChange={(e) => setNewPkg((x) => ({ ...x, name: e.target.value }))}
-          />
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input
-              className="field-input mono"
-              type="number"
-              placeholder="Hours"
-              value={newPkg.durationHours}
-              onChange={(e) => setNewPkg((x) => ({ ...x, durationHours: e.target.value }))}
-              style={{ flex: 1, minWidth: 70 }}
-            />
-            <input
-              className="field-input mono"
-              type="number"
-              placeholder="Grace h"
-              value={newPkg.graceHours}
-              onChange={(e) => setNewPkg((x) => ({ ...x, graceHours: e.target.value }))}
-              style={{ flex: 1, minWidth: 70 }}
-            />
-            <input
-              className="field-input mono"
-              type="number"
-              placeholder="APR %"
-              value={newPkg.interestRateApr}
-              onChange={(e) => setNewPkg((x) => ({ ...x, interestRateApr: e.target.value }))}
-              style={{ flex: 1, minWidth: 70 }}
-            />
-            <button
-              className="btn btn-primary"
-              style={{ padding: "0 14px" }}
-              onClick={requestAddPackage}
-            >
-              Add
-            </button>
-          </div>
-        </div>
+        </Link>
       </section>
 
       <section>
