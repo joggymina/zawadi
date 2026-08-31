@@ -4,7 +4,7 @@ import * as accountApi from "../api/account";
 import * as publicApi from "../api/public";
 import type { Loan, AccountSummary, AdminSettings, MyFunding } from "../api/types";
 import { AmountModal } from "../components/AmountModal";
-import { fmt, pct, errorMessage } from "../utils/format";
+import { fmt, pct, errorMessage, formatDuration, shortDate } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 import { NewLoanModal } from "../components/NewLoanModal";
 
@@ -15,6 +15,12 @@ function statusMeta(status: Loan["status"]) {
   if (status === "REPAYING") return { label: "Repaying", bg: "#e6f0fb", fg: "#0c447c" };
   if (status === "REPAID") return { label: "Fully repaid", bg: "var(--green-pale)", fg: "var(--green-deep)" };
   return { label: status, bg: "var(--line)", fg: "var(--ink-soft)" };
+}
+
+function packageLine(l: Loan) {
+  if (l.package) return l.package.name;
+  if (l.packageId) return "Package";
+  return null;
 }
 
 export function LoansPage() {
@@ -95,6 +101,7 @@ export function LoansPage() {
                 100,
                 Math.round((Number(l.fundedAmount) / Number(l.amount)) * 100),
               );
+              const pkg = packageLine(l);
               return (
                 <div key={l.id} className="card" style={{ padding: "14px 16px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -105,6 +112,8 @@ export function LoansPage() {
                   </div>
                   <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4 }}>
                     {l.purpose || "General purpose loan"}
+                    {pkg ? ` · ${pkg}` : ""}
+                    {l.package ? ` (${formatDuration(l.package.durationHours)})` : ""}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--green-deep)", marginTop: 8 }}>
                     🛡 {l.guarantors.length}/{settings.guarantorsRequired} guarantors ·{" "}
@@ -180,7 +189,13 @@ export function LoansPage() {
                   </div>
                   <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4 }}>
                     {l.purpose || "General purpose loan"} · {pct(l.interestRateApr)} p.a.
+                    {l.package ? ` · ${l.package.name}` : ""}
                   </div>
+                  {l.dueAt && l.status === "REPAYING" && (
+                    <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                      Due {new Date(l.dueAt).toLocaleString()}
+                    </div>
+                  )}
                   <div
                     style={{
                       marginTop: 10,
@@ -270,7 +285,13 @@ export function LoansPage() {
                     </div>
                     <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4 }}>
                       {l.purpose || "General purpose loan"}
+                      {l.package ? ` · ${l.package.name}` : ""}
                     </div>
+                    {l.dueAt && (l.status === "REPAYING" || l.status === "OPEN") && (
+                      <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                        Due {new Date(l.dueAt).toLocaleString()}
+                      </div>
+                    )}
                     <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 6 }}>
                       Guarantors:{" "}
                       {l.guarantors.map((g) => "@" + (g.user?.username ?? g.userId)).join(", ")}

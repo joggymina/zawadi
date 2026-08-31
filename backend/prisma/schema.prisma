@@ -150,6 +150,18 @@ enum LoanStatus {
   CANCELLED
 }
 
+model LoanPackage {
+  id             String   @id @default(uuid())
+  name           String
+  durationHours  Int
+  graceHours     Int      @default(0)
+  active         Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  loans Loan[]
+}
+
 model Loan {
   id              String     @id @default(uuid())
   borrowerId      String
@@ -158,6 +170,10 @@ model Loan {
   purpose         String?
   interestRateApr Decimal    @db.Decimal(6, 3)
   status          LoanStatus @default(PENDING_GUARANTORS)
+
+  packageId       String?
+  package         LoanPackage? @relation(fields: [packageId], references: [id])
+  dueAt           DateTime?
 
   principalOwed   Decimal    @db.Decimal(18, 2) @default(0)
   interestOwed    Decimal    @db.Decimal(18, 2) @default(0)
@@ -173,6 +189,7 @@ model Loan {
 
   @@index([borrowerId])
   @@index([status])
+  @@index([packageId])
 }
 
 // Snapshot of the guarantor's qualifying balance at pledge time, so a

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import * as adminApi from "../api/admin";
-import type { AdminSettings, Offer, LoanRepayment } from "../api/types";
-import { fmt, errorMessage } from "../utils/format";
+import type { AdminSettings, Offer, LoanRepayment, LoanPackage } from "../api/types";
+import { fmt, errorMessage, formatDuration } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 
 export function AdminPage() {
@@ -10,19 +10,23 @@ export function AdminPage() {
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [pending, setPending] = useState<LoanRepayment[]>([]);
+  const [packages, setPackages] = useState<LoanPackage[]>([]);
   const [newOffer, setNewOffer] = useState({ title: "", description: "" });
+  const [newPkg, setNewPkg] = useState({ name: "", durationHours: "168", graceHours: "24" });
   const [error, setError] = useState("");
 
   async function load() {
     try {
-      const [s, o, p] = await Promise.all([
+      const [s, o, p, pkgs] = await Promise.all([
         adminApi.getSettings(),
         adminApi.listOffers(),
         adminApi.listPendingRepayments(),
+        adminApi.listPackages(),
       ]);
       setSettings(s);
       setOffers(o);
       setPending(p);
+      setPackages(pkgs);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -69,6 +73,39 @@ export function AdminPage() {
     try {
       await adminApi.deleteOffer(id);
       setOffers((o) => o.filter((x) => x.id !== id));
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
+  }
+
+  async function addPackage() {
+    const durationHours = parseInt(newPkg.durationHours, 10);
+    const graceHours = parseInt(newPkg.graceHours, 10) || 0;
+    if (!newPkg.name.trim() || !durationHours || durationHours <= 0) {
+      showToast("Name and positive duration hours required");
+      return;
+    }
+    try {
+      const pkg = await adminApi.createPackage({
+        name: newPkg.name.trim(),
+        durationHours,
+        graceHours,
+        active: true,
+        sortOrder: packages.length + 1,
+      });
+      setPackages((list) => [...list, pkg]);
+      setNewPkg({ name: "", durationHours: "168", graceHours: "24" });
+      showToast("Package created");
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
+  }
+
+  async function deactivatePackage(id: string) {
+    try {
+      await adminApi.deletePackage(id);
+      setPackages((list) => list.map((p) => (p.id === id ? { ...p, active: false } : p)));
+      showToast("Package deactivated");
     } catch (err) {
       showToast(errorMessage(err));
     }
@@ -163,18 +200,82 @@ export function AdminPage() {
         <Link
           to="/admin/users"
           className="card"
-          style={{
-            display: "block",
-            padding: "14px 16px",
-            textDecoration: "none",
-            color: "inherit",
-          }}
+          style={{ display: "block", padding: "14px 16px", textDecoration: "none", color: "inherit" }}
         >
           <div style={{ fontSize: 14, fontWeight: 500 }}>Open user list →</div>
           <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
             Search, filter by status, and update verification
           </div>
         </Link>
+      </section>
+
+      <section>
+        <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
+          Loan packages
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {packages.map((p) => (
+            <div
+              key={p.id}
+              className="card"
+              style={{
+                padding: "10px 12px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                opacity: p.active ? 1 : 0.55,
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 500 }}>
+                  {p.name} {!p.active && "(inactive)"}
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>
+                  {formatDuration(p.durationHours)}
+                  {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""}
+                </div>
+              </div>
+              {p.active && (
+                <button
+                  className="btn btn-outline"
+                  style={{ padding: "6px 10px", fontSize: 11.5 }}
+                  onClick={() => deactivatePackage(p.id)}
+                >
+                  Deactivate
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+          <input
+            className="field-input"
+            placeholder="Package name (e.g. 7 days)"
+            value={newPkg.name}
+            onChange={(e) => setNewPkg((x) => ({ ...x, name: e.target.value }))}
+          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              className="field-input mono"
+              type="number"
+              placeholder="Duration hours"
+              value={newPkg.durationHours}
+              onChange={(e) => setNewPkg((x) => ({ ...x, durationHours: e.target.value }))}
+              style={{ flex: 1 }}
+            />
+            <input
+              className="field-input mono"
+              type="number"
+              placeholder="Grace hours"
+              value={newPkg.graceHours}
+              onChange={(e) => setNewPkg((x) => ({ ...x, graceHours: e.target.value }))}
+              style={{ flex: 1 }}
+            />
+            <button className="btn btn-primary" style={{ padding: "0 14px" }} onClick={addPackage}>
+              Add
+            </button>
+          </div>
+        </div>
       </section>
 
       <section>
@@ -212,9 +313,6 @@ export function AdminPage() {
             value={Number(settings.guarantorCoverageExtraPct)}
             onSave={(v) => saveSettings({ guarantorCoverageExtraPct: v })}
           />
-        </div>
-        <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 8 }}>
-          Platform interest share is stored now and applied when repayment distribution is upgraded.
         </div>
       </section>
 

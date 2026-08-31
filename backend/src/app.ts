@@ -11,6 +11,8 @@ import loanRoutes from "./routes/loan.routes";
 import adminRoutes from "./routes/admin.routes";
 import settingsRoutes from "./routes/settings.routes";
 import offersRoutes from "./routes/offers.routes";
+import packagesRoutes from "./routes/packages.routes";
+// ...
 
 export function createApp() {
   const app = express();
@@ -41,5 +43,6 @@ export function createApp() {
   app.use("/api/offers", offersRoutes);
 
   app.use(errorHandler);
+  app.use("/api/packages", packagesRoutes);
   return app;
 }

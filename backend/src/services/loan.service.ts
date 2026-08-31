@@ -3,21 +3,20 @@ import { AppError } from "../middleware/errorHandler";
 import { getAdminSettings } from "./adminSettings.service";
 import { Decimal } from "@prisma/client/runtime/library";
 
-/**
- * Create a loan request. The borrower's chosen guarantors' investment
- * principal must, combined, cover the loan amount plus the admin's
- * configured buffer (default: 105%). We snapshot each guarantor's balance
- * at pledge time so a later withdrawal doesn't retroactively invalidate
- * an already-published loan.
- */
 export async function createLoanRequest(params: {
   borrowerId: string;
   amount: number;
   purpose?: string;
   guarantorUsernames: string[];
+  packageId: string;
 }) {
   const settings = await getAdminSettings();
   const amount = new Decimal(params.amount);
+
+  const pkg = await prisma.loanPackage.findFirst({
+    where: { id: params.packageId, active: true },
+  });
+  if (!pkg) throw new AppError("Selected loan package is not available.", 422);
 
   if (params.guarantorUsernames.includes("")) {
     throw new AppError("Invalid guarantor list.");
@@ -43,10 +42,9 @@ export async function createLoanRequest(params: {
 
   const threshold = amount.mul(1 + Number(settings.guarantorCoverageExtraPct) / 100);
   const combined = guarantors.reduce(
-    (sum, g) => sum.plus(g.account?.principalBalance ?? new Decimal(0)),
+    (sum, g) => sum.plus(g.account?.principalBalance ?? 0),
     new Decimal(0),
   );
-
   if (combined.lessThan(threshold)) {
     throw new AppError(
       `Combined guarantor balance (${combined.toFixed(2)}) is below the required ${threshold.toFixed(2)} (${100 + Number(settings.guarantorCoverageExtraPct)}% of the loan).`,
@@ -61,6 +59,7 @@ export async function createLoanRequest(params: {
       purpose: params.purpose,
       interestRateApr: settings.loanAnnualRatePct,
       status: "OPEN",
+      packageId: pkg.id,
       guarantors: {
         create: guarantors.map((g) => ({
           userId: g.id,
@@ -68,38 +67,37 @@ export async function createLoanRequest(params: {
         })),
       },
     },
-    include: { guarantors: true },
+    include: { guarantors: true, package: true },
   });
 }
 
-/**
- * Fund an open loan. When the loan becomes fully funded, it transitions
- * to REPAYING and the full amount is disbursed to the borrower in the
- * same DB transaction as the funder's debit — both happen or neither does.
- *
- * The loan row is locked with FOR UPDATE so two concurrent funders cannot
- * both read the same remaining amount and oversubscribe the loan.
- */
 export async function fundLoan(params: { loanId: string; funderId: string; amount: number }) {
   const amount = new Decimal(params.amount);
 
   return prisma.$transaction(async (tx) => {
-    // Serialize concurrent funding attempts on this loan row.
     await tx.$executeRaw`SELECT id FROM "Loan" WHERE id = ${params.loanId} FOR UPDATE`;
 
-    const loan = await tx.loan.findUnique({ where: { id: params.loanId } });
+    const loan = await tx.loan.findUnique({
+      where: { id: params.loanId },
+      include: { package: true },
+    });
     if (!loan) throw new AppError("Loan not found.", 404);
-    if (loan.status !== "OPEN") throw new AppError("This loan is no longer open for funding.", 422);
-    if (loan.borrowerId === params.funderId) throw new AppError("You can't fund your own loan.", 422);
+    if (loan.status !== "OPEN") throw new AppError("This loan is not open for funding.", 422);
+    if (loan.borrowerId === params.funderId) {
+      throw new AppError("You can't fund your own loan.", 422);
+    }
 
     const remaining = loan.amount.minus(loan.fundedAmount);
     if (amount.greaterThan(remaining)) {
-      throw new AppError(`Only ${remaining.toFixed(2)} is still needed for this loan.`, 422);
+      throw new AppError(`Only ${remaining.toFixed(2)} remains to be funded.`, 422);
     }
 
-    const funderAccount = await tx.investmentAccount.findUnique({ where: { userId: params.funderId } });
-    if (!funderAccount || amount.greaterThan(funderAccount.principalBalance)) {
-      throw new AppError("That's more than your available investment balance.", 422);
+    const funderAccount = await tx.investmentAccount.findUnique({
+      where: { userId: params.funderId },
+    });
+    if (!funderAccount) throw new AppError("Account not found.", 404);
+    if (amount.greaterThan(funderAccount.principalBalance)) {
+      throw new AppError("Insufficient investment principal.", 422);
     }
 
     await tx.investmentAccount.update({
@@ -125,6 +123,11 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
     const newFundedAmount = loan.fundedAmount.plus(amount);
     const fullyFunded = newFundedAmount.greaterThanOrEqualTo(loan.amount);
 
+    let dueAt: Date | null = loan.dueAt;
+    if (fullyFunded && loan.package) {
+      dueAt = new Date(Date.now() + loan.package.durationHours * 60 * 60 * 1000);
+    }
+
     const updatedLoan = await tx.loan.update({
       where: { id: loan.id },
       data: {
@@ -133,7 +136,9 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
         principalOwed: fullyFunded ? loan.amount : loan.principalOwed,
         lastAccrualAt: fullyFunded ? new Date() : loan.lastAccrualAt,
         disbursedAt: fullyFunded ? new Date() : loan.disbursedAt,
+        dueAt: fullyFunded ? dueAt : loan.dueAt,
       },
+      include: { package: true },
     });
 
     if (fullyFunded) {
@@ -149,7 +154,9 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
           userId: loan.borrowerId,
           type: "LOAN_DISBURSEMENT",
           amount: loan.amount,
-          balanceAfter: borrowerAccount.principalBalance.plus(loan.amount).plus(borrowerAccount.interestBalance),
+          balanceAfter: borrowerAccount.principalBalance
+            .plus(loan.amount)
+            .plus(borrowerAccount.interestBalance),
           referenceId: loan.id,
           note: "Loan disbursed",
         },
@@ -160,12 +167,6 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
   });
 }
 
-/**
- * Borrower repayment. Their own balance is debited and the loan's
- * outstanding balance is reduced immediately — but the payout to funders
- * is recorded as PENDING and only realized when an admin approves it
- * (see approveRepayment / rejectRepayment below).
- */
 export async function repayLoan(params: { loanId: string; borrowerId: string; amount: number }) {
   const amount = new Decimal(params.amount);
 
@@ -178,68 +179,72 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     if (loan.borrowerId !== params.borrowerId) throw new AppError("This isn't your loan.", 403);
     if (loan.status !== "REPAYING") throw new AppError("This loan isn't awaiting repayment.", 422);
 
-    const outstanding = loan.principalOwed.plus(loan.interestOwed);
-    if (amount.greaterThan(outstanding.plus(0.01))) {
-      throw new AppError(`Outstanding balance is only ${outstanding.toFixed(2)}.`, 422);
+    const account = await tx.investmentAccount.findUnique({ where: { userId: params.borrowerId } });
+    if (!account) throw new AppError("Account not found.", 404);
+    if (amount.greaterThan(account.principalBalance.plus(account.interestBalance))) {
+      throw new AppError("Insufficient balance for this repayment.", 422);
     }
 
-    const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({
-      where: { userId: params.borrowerId },
-    });
-    if (amount.greaterThan(borrowerAccount.principalBalance)) {
-      throw new AppError("You don't have enough in your own balance to make this repayment.", 422);
-    }
+    const principalOwedBefore = loan.principalOwed;
+    const interestOwedBefore = loan.interestOwed;
+    const totalOwed = principalOwedBefore.plus(interestOwedBefore);
+    const pay = amount.greaterThan(totalOwed) ? totalOwed : amount;
 
-    let remaining = amount;
-    const interestPaid = Decimal.min(remaining, loan.interestOwed);
-    remaining = remaining.minus(interestPaid);
-    const principalPaid = Decimal.min(remaining, loan.principalOwed);
+    let interestPay = pay.greaterThan(interestOwedBefore) ? interestOwedBefore : pay;
+    let principalPay = pay.minus(interestPay);
 
-    const newInterestOwed = loan.interestOwed.minus(interestPaid);
-    const newPrincipalOwed = loan.principalOwed.minus(principalPaid);
-    const fullyRepaid =
-      newPrincipalOwed.lessThanOrEqualTo(0.01) && newInterestOwed.lessThanOrEqualTo(0.01);
-
-    const totalFunded = loan.fundings.reduce((s, f) => s.plus(f.amount), new Decimal(0));
-    const denominator = totalFunded.greaterThan(0) ? totalFunded : loan.amount;
+    const newInterest = interestOwedBefore.minus(interestPay);
+    const newPrincipal = principalOwedBefore.minus(principalPay);
 
     await tx.investmentAccount.update({
       where: { userId: params.borrowerId },
-      data: { principalBalance: { decrement: amount } },
+      data: { principalBalance: { decrement: pay } },
+    });
+
+    const updatedAccount = await tx.investmentAccount.findUniqueOrThrow({
+      where: { userId: params.borrowerId },
     });
 
     await tx.transaction.create({
       data: {
         userId: params.borrowerId,
         type: "LOAN_REPAYMENT",
-        amount,
-        balanceAfter: borrowerAccount.principalBalance.minus(amount).plus(borrowerAccount.interestBalance),
+        amount: pay,
+        balanceAfter: updatedAccount.principalBalance.plus(updatedAccount.interestBalance),
         referenceId: loan.id,
-        note: "Loan repayment (awaiting admin approval before funders are credited)",
+        note: "Loan repayment (pending approval)",
       },
     });
+
+    const totalFunded = loan.fundings.reduce((s, f) => s.plus(f.amount), new Decimal(0));
+    const distributions = loan.fundings.map((f) => ({
+      funderId: f.funderId,
+      amount: totalFunded.isZero() ? new Decimal(0) : pay.mul(f.amount).div(totalFunded),
+    }));
 
     const repayment = await tx.loanRepayment.create({
       data: {
         loanId: loan.id,
-        amount,
-        principalOwedBefore: loan.principalOwed,
-        interestOwedBefore: loan.interestOwed,
+        amount: pay,
+        status: "PENDING",
+        principalOwedBefore,
+        interestOwedBefore,
         distributions: {
-          create: loan.fundings.map((f) => ({
-            funderId: f.funderId,
-            amount: amount.mul(f.amount).div(denominator),
+          create: distributions.map((d) => ({
+            funderId: d.funderId,
+            amount: d.amount,
           })),
         },
       },
       include: { distributions: true },
     });
 
+    const fullyRepaid = newPrincipal.lessThanOrEqualTo(0) && newInterest.lessThanOrEqualTo(0);
     await tx.loan.update({
       where: { id: loan.id },
       data: {
-        principalOwed: newPrincipalOwed,
-        interestOwed: newInterestOwed,
+        principalOwed: newPrincipal.lessThan(0) ? new Decimal(0) : newPrincipal,
+        interestOwed: newInterest.lessThan(0) ? new Decimal(0) : newInterest,
         status: fullyRepaid ? "REPAID" : "REPAYING",
       },
     });
@@ -259,20 +264,20 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
       throw new AppError("This repayment has already been reviewed.", 422);
     }
 
-    for (const dist of repayment.distributions) {
+    for (const d of repayment.distributions) {
       const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
-        where: { userId: dist.funderId },
+        where: { userId: d.funderId },
       });
       await tx.investmentAccount.update({
-        where: { userId: dist.funderId },
-        data: { principalBalance: { increment: dist.amount } },
+        where: { userId: d.funderId },
+        data: { principalBalance: { increment: d.amount } },
       });
       await tx.transaction.create({
         data: {
-          userId: dist.funderId,
+          userId: d.funderId,
           type: "LOAN_RETURN",
-          amount: dist.amount,
-          balanceAfter: funderAccount.principalBalance.plus(dist.amount).plus(funderAccount.interestBalance),
+          amount: d.amount,
+          balanceAfter: funderAccount.principalBalance.plus(d.amount).plus(funderAccount.interestBalance),
           referenceId: repayment.loanId,
           note: `Return from loan ${repayment.loanId}`,
         },
@@ -322,9 +327,11 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
         userId: repayment.loan.borrowerId,
         type: "ADJUSTMENT",
         amount: repayment.amount,
-        balanceAfter: borrowerAccount.principalBalance.plus(repayment.amount).plus(borrowerAccount.interestBalance),
+        balanceAfter: borrowerAccount.principalBalance
+          .plus(repayment.amount)
+          .plus(borrowerAccount.interestBalance),
         referenceId: repayment.loanId,
-        note: "Repayment rejected by admin — refunded",
+        note: "Repayment rejected — refunded",
       },
     });
 

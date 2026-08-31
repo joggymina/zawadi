@@ -1,5 +1,5 @@
 import { request } from "./client";
-import type { AdminSettings, Offer, LoanRepayment } from "./types";
+import type { AdminSettings, Offer, LoanRepayment, LoanPackage } from "./types";
 
 export type AdminUser = {
   id: string;
@@ -65,4 +65,35 @@ export function setUserKyc(id: string, kycStatus: "PENDING" | "VERIFIED" | "REJE
     `/api/admin/users/${id}/kyc`,
     { method: "PATCH", body: { kycStatus } },
   );
+}
+
+export function listPackages() {
+  return request<LoanPackage[]>("/api/admin/packages");
+}
+
+export function createPackage(body: {
+  name: string;
+  durationHours: number;
+  graceHours?: number;
+  active?: boolean;
+  sortOrder?: number;
+}) {
+  return request<LoanPackage>("/api/admin/packages", { method: "POST", body });
+}
+
+export function updatePackage(
+  id: string,
+  body: {
+    name: string;
+    durationHours: number;
+    graceHours?: number;
+    active?: boolean;
+    sortOrder?: number;
+  },
+) {
+  return request<LoanPackage>(`/api/admin/packages/${id}`, { method: "PUT", body });
+}
+
+export function deletePackage(id: string) {
+  return request<null>(`/api/admin/packages/${id}`, { method: "DELETE" });
 }

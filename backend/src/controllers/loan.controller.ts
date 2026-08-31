@@ -9,7 +9,20 @@ export const createLoanSchema = z.object({
   amount: z.number().positive().max(10_000_000),
   purpose: z.string().max(200).optional(),
   guarantorUsernames: z.array(z.string()).min(1).max(20),
+  packageId: z.string().min(1),
 });
+
+// createLoan — pass packageId:
+  const loan = await loanService.createLoanRequest({
+    borrowerId: req.user!.id,
+    amount: body.amount,
+    purpose: body.purpose,
+    guarantorUsernames: body.guarantorUsernames,
+    packageId: body.packageId,
+  });
+
+// In listMarketplace and listMine includes, add:
+      package: true,
 
 export const fundLoanSchema = z.object({ amount: z.number().positive() });
 export const repayLoanSchema = z.object({ amount: z.number().positive() });

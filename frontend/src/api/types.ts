@@ -41,6 +41,15 @@ export type LoanStatus =
 
 export type RepaymentStatus = "PENDING" | "APPROVED" | "REJECTED";
 
+export interface LoanPackage {
+  id: string;
+  name: string;
+  durationHours: number;
+  graceHours: number;
+  active: boolean;
+  sortOrder: number;
+}
+
 export interface LoanGuarantor {
   id: string;
   userId: string;
@@ -82,6 +91,9 @@ export interface Loan {
   interestOwed: string;
   fundedAmount: string;
   createdAt: string;
+  packageId?: string | null;
+  dueAt?: string | null;
+  package?: LoanPackage | null;
   borrower?: { username: string };
   guarantors: LoanGuarantor[];
   fundings?: LoanFunding[];

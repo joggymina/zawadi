@@ -5,6 +5,7 @@ export function createLoan(params: {
   amount: number;
   purpose?: string;
   guarantorUsernames: string[];
+  packageId: string;
 }) {
   return request<Loan>("/api/loans", { method: "POST", body: params });
 }
