@@ -54,6 +54,10 @@ export function AdminPage() {
         drafts[pkg.id] = String(Number(pkg.interestRateApr ?? 0));
       });
       setRateDrafts(drafts);
+      setNewPkg((x) => ({
+        ...x,
+        interestRateApr: String(Number(s.loanAnnualRatePct ?? 33)),
+      }));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -63,8 +67,22 @@ export function AdminPage() {
     load();
   }, []);
 
-  if (error) return <div style={{ padding: 20, color: "var(--rust)", fontSize: 13.5 }}>{error}</div>;
-  if (!settings) return <div style={{ padding: 20, color: "var(--ink-soft)" }}>Loading…</div>;
+  if (error) {
+    return <div style={{ padding: 20, color: "var(--rust)", fontSize: 13.5 }}>{error}</div>;
+  }
+  if (!settings) {
+    return <div style={{ padding: 20, color: "var(--ink-soft)" }}>Loading…</div>;
+  }
+
+  const defaultLoanRate = Number(settings.loanAnnualRatePct ?? 0);
+  const packageRates = packages.map((p) => Number(p.interestRateApr ?? 0));
+  const uniqueRates = Array.from(new Set(packageRates.map((r) => r.toFixed(3))));
+  const ratesInSync = uniqueRates.length <= 1;
+  const syncedRate = packageRates[0];
+  const matchesDefault =
+    ratesInSync &&
+    packages.length > 0 &&
+    Math.abs((syncedRate ?? 0) - defaultLoanRate) < 0.001;
 
   async function saveSettings(
     patch: Partial<{
@@ -122,7 +140,17 @@ export function AdminPage() {
     }
   }
 
-  /** Changing any package rate applies the same APR to every package (keeps rates in sync). */
+  function applyRatesToState(list: LoanPackage[], rate: number) {
+    const sorted = sortPackages(list);
+    setPackages(sorted);
+    const drafts: Record<string, string> = {};
+    sorted.forEach((pkg) => {
+      drafts[pkg.id] = String(Number(pkg.interestRateApr ?? rate));
+    });
+    setRateDrafts(drafts);
+  }
+
+  /** Changing any package rate applies the same APR to every package. */
   function requestRateChange(sourceName: string, rateStr: string) {
     const rate = parseFloat(rateStr);
     if (Number.isNaN(rate) || rate < 0 || rate > 100) {
@@ -131,18 +159,26 @@ export function AdminPage() {
     }
     askConfirm({
       title: "Update interest rates?",
-      body: `Set every loan package to ${rate.toFixed(2)}% p.a.?\n\nTriggered from “${sourceName}”.\nThis keeps package rates in sync. Only new loans use the new rate.`,
+      body: `Set every loan package to ${rate.toFixed(2)}% p.a.?\n\nTriggered from “${sourceName}”.\nThis keeps package rates balanced (no leakage). Only new loans use the new rate.`,
       confirmLabel: "Save all rates",
       onConfirm: async () => {
         const res = await adminApi.bulkSetPackageRates(rate);
-        const sorted = sortPackages(res.packages);
-        setPackages(sorted);
-        const drafts: Record<string, string> = {};
-        sorted.forEach((pkg) => {
-          drafts[pkg.id] = String(Number(pkg.interestRateApr ?? rate));
-        });
-        setRateDrafts(drafts);
+        applyRatesToState(res.packages, rate);
         showToast(`All packages set to ${rate.toFixed(2)}% p.a. (${res.count} updated)`);
+      },
+    });
+  }
+
+  function requestResetToDefault() {
+    const rate = defaultLoanRate;
+    askConfirm({
+      title: "Reset all package rates?",
+      body: `Set every package to the default loan rate of ${rate.toFixed(2)}% p.a.?\n\nThis aligns packages with Rates & fees and avoids rate leakage on new loans.`,
+      confirmLabel: "Reset to default",
+      onConfirm: async () => {
+        const res = await adminApi.bulkSetPackageRates(rate);
+        applyRatesToState(res.packages, rate);
+        showToast(`All packages reset to ${rate.toFixed(2)}% p.a.`);
       },
     });
   }
@@ -187,7 +223,7 @@ export function AdminPage() {
     }
     askConfirm({
       title: "Add package?",
-      body: `Create “${newPkg.name.trim()}” (${formatDuration(durationHours)}) at ${interestRateApr.toFixed(2)}% p.a.?`,
+      body: `Create “${newPkg.name.trim()}” (${formatDuration(durationHours)}) at ${interestRateApr.toFixed(2)}% p.a.?\n\nTip: after adding, use Save rate or Reset to default if you want all packages on the same APR.`,
       confirmLabel: "Add package",
       onConfirm: async () => {
         const pkg = await adminApi.createPackage({
@@ -200,13 +236,18 @@ export function AdminPage() {
         });
         setPackages((list) => sortPackages([...list, pkg]));
         setRateDrafts((d) => ({ ...d, [pkg.id]: String(interestRateApr) }));
-        setNewPkg({ name: "", durationHours: "168", graceHours: "24", interestRateApr: "33" });
+        setNewPkg({
+          name: "",
+          durationHours: "168",
+          graceHours: "24",
+          interestRateApr: String(defaultLoanRate || 33),
+        });
         showToast(`Added ${pkg.name} at ${interestRateApr.toFixed(2)}% p.a.`);
       },
     });
   }
 
-  async function approve(id: string) {
+  function approve(id: string) {
     askConfirm({
       title: "Approve repayment?",
       body: "Funders will be credited immediately.",
@@ -219,7 +260,7 @@ export function AdminPage() {
     });
   }
 
-  async function reject(id: string) {
+  function reject(id: string) {
     askConfirm({
       title: "Reject repayment?",
       body: "The borrower will be refunded.",
@@ -346,7 +387,12 @@ export function AdminPage() {
         <Link
           to="/admin/users"
           className="card"
-          style={{ display: "block", padding: "14px 16px", textDecoration: "none", color: "inherit" }}
+          style={{
+            display: "block",
+            padding: "14px 16px",
+            textDecoration: "none",
+            color: "inherit",
+          }}
         >
           <div style={{ fontSize: 14, fontWeight: 500 }}>Open user list →</div>
           <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
@@ -360,8 +406,64 @@ export function AdminPage() {
           Loan packages
         </div>
         <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 10 }}>
-          Sorted by duration. Rates stay in sync: saving a rate on any package updates{" "}
-          <strong>all</strong> packages after you confirm.
+          Sorted by duration. Saving a rate updates <strong>all</strong> packages so rates stay
+          balanced (no leakage).
+        </div>
+
+        {packages.length > 0 && (!ratesInSync || !matchesDefault) && (
+          <div
+            style={{
+              background: "var(--amber-pale)",
+              border: "1px solid #e0c080",
+              borderRadius: 10,
+              padding: "10px 12px",
+              marginBottom: 12,
+              fontSize: 12.5,
+              color: "#7a5a2e",
+              lineHeight: 1.45,
+            }}
+          >
+            {!ratesInSync ? (
+              <>
+                <strong>Rate leakage detected.</strong> Packages are not on the same APR (
+                {uniqueRates.map((r) => `${r}%`).join(", ")}). New loans may get inconsistent
+                rates. Use <strong>Save rate</strong> on any package or{" "}
+                <strong>Reset to default</strong>.
+              </>
+            ) : (
+              <>
+                <strong>Rates differ from default.</strong> Packages are at{" "}
+                {Number(syncedRate).toFixed(2)}% p.a., but the default loan rate is{" "}
+                {defaultLoanRate.toFixed(2)}% p.a. Reset if you want them aligned.
+              </>
+            )}
+          </div>
+        )}
+
+        {packages.length > 0 && ratesInSync && matchesDefault && (
+          <div
+            style={{
+              background: "var(--green-pale)",
+              borderRadius: 10,
+              padding: "8px 12px",
+              marginBottom: 12,
+              fontSize: 12.5,
+              color: "var(--green-deep)",
+            }}
+          >
+            All packages balanced at {defaultLoanRate.toFixed(2)}% p.a. (matches default).
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <button
+            className="btn btn-outline"
+            style={{ padding: "8px 14px", fontSize: 12.5 }}
+            onClick={requestResetToDefault}
+            disabled={packages.length === 0}
+          >
+            Reset to default ({defaultLoanRate.toFixed(2)}%)
+          </button>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -380,7 +482,10 @@ export function AdminPage() {
                   <div style={{ fontSize: 14, fontWeight: 500 }}>
                     {p.name}
                     {!p.active && (
-                      <span style={{ fontWeight: 400, color: "var(--ink-soft)" }}> (inactive)</span>
+                      <span style={{ fontWeight: 400, color: "var(--ink-soft)" }}>
+                        {" "}
+                        (inactive)
+                      </span>
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 2 }}>
@@ -417,7 +522,10 @@ export function AdminPage() {
                       className="btn btn-outline"
                       style={{ padding: "6px 12px", fontSize: 12 }}
                       onClick={() =>
-                        requestRateChange(p.name, rateDrafts[p.id] ?? String(p.interestRateApr))
+                        requestRateChange(
+                          p.name,
+                          rateDrafts[p.id] ?? String(p.interestRateApr),
+                        )
                       }
                     >
                       Save rate
@@ -504,7 +612,7 @@ export function AdminPage() {
             onSave={(v) => saveSettings({ investAnnualRatePct: v })}
           />
           <NumField
-            label="Default loan rate hint for new packages (% p.a.)"
+            label="Default loan rate (% p.a.) — used by Reset to default"
             value={Number(settings.loanAnnualRatePct)}
             onSave={(v) => saveSettings({ loanAnnualRatePct: v })}
           />
