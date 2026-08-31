@@ -75,6 +75,7 @@ export function createPackage(body: {
   name: string;
   durationHours: number;
   graceHours?: number;
+  interestRateApr?: number;
   active?: boolean;
   sortOrder?: number;
 }) {
@@ -87,6 +88,7 @@ export function updatePackage(
     name: string;
     durationHours: number;
     graceHours?: number;
+    interestRateApr?: number;
     active?: boolean;
     sortOrder?: number;
   },
@@ -95,5 +97,16 @@ export function updatePackage(
 }
 
 export function deletePackage(id: string) {
-  return request<null>(`/api/admin/packages/${id}`, { method: "DELETE" });
+  return request<LoanPackage>(`/api/admin/packages/${id}`, { method: "DELETE" });
+}
+
+export function activatePackage(id: string) {
+  return request<LoanPackage>(`/api/admin/packages/${id}/activate`, { method: "POST" });
+}
+
+export function bulkSetPackageRates(interestRateApr: number) {
+  return request<{ count: number; interestRateApr: number; packages: LoanPackage[] }>(
+    "/api/admin/packages/bulk-rate",
+    { method: "POST", body: { interestRateApr } },
+  );
 }

@@ -5,6 +5,10 @@ import type { AdminSettings, Offer, LoanRepayment, LoanPackage } from "../api/ty
 import { fmt, errorMessage, formatDuration } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 
+function sortPackages(list: LoanPackage[]) {
+  return [...list].sort((a, b) => a.durationHours - b.durationHours);
+}
+
 export function AdminPage() {
   const showToast = useToast();
   const [settings, setSettings] = useState<AdminSettings | null>(null);
@@ -12,7 +16,13 @@ export function AdminPage() {
   const [pending, setPending] = useState<LoanRepayment[]>([]);
   const [packages, setPackages] = useState<LoanPackage[]>([]);
   const [newOffer, setNewOffer] = useState({ title: "", description: "" });
-  const [newPkg, setNewPkg] = useState({ name: "", durationHours: "168", graceHours: "24" });
+  const [newPkg, setNewPkg] = useState({
+    name: "",
+    durationHours: "168",
+    graceHours: "24",
+    interestRateApr: "33",
+  });
+  const [bulkRate, setBulkRate] = useState("33");
   const [error, setError] = useState("");
 
   async function load() {
@@ -26,7 +36,7 @@ export function AdminPage() {
       setSettings(s);
       setOffers(o);
       setPending(p);
-      setPackages(pkgs);
+      setPackages(sortPackages(pkgs));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -81,8 +91,13 @@ export function AdminPage() {
   async function addPackage() {
     const durationHours = parseInt(newPkg.durationHours, 10);
     const graceHours = parseInt(newPkg.graceHours, 10) || 0;
+    const interestRateApr = parseFloat(newPkg.interestRateApr);
     if (!newPkg.name.trim() || !durationHours || durationHours <= 0) {
       showToast("Name and positive duration hours required");
+      return;
+    }
+    if (Number.isNaN(interestRateApr) || interestRateApr < 0) {
+      showToast("Enter a valid interest rate");
       return;
     }
     try {
@@ -90,22 +105,78 @@ export function AdminPage() {
         name: newPkg.name.trim(),
         durationHours,
         graceHours,
+        interestRateApr,
         active: true,
-        sortOrder: packages.length + 1,
+        sortOrder: durationHours,
       });
-      setPackages((list) => [...list, pkg]);
-      setNewPkg({ name: "", durationHours: "168", graceHours: "24" });
-      showToast("Package created");
+      setPackages((list) => sortPackages([...list, pkg]));
+      setNewPkg({ name: "", durationHours: "168", graceHours: "24", interestRateApr: "33" });
+      showToast(
+        `Package created: ${pkg.name} at ${Number(pkg.interestRateApr).toFixed(2)}% p.a.`,
+      );
     } catch (err) {
       showToast(errorMessage(err));
     }
   }
 
-  async function deactivatePackage(id: string) {
+  async function savePackageRate(p: LoanPackage, rateStr: string) {
+    const rate = parseFloat(rateStr);
+    if (Number.isNaN(rate) || rate < 0) {
+      showToast("Invalid rate");
+      return;
+    }
     try {
-      await adminApi.deletePackage(id);
-      setPackages((list) => list.map((p) => (p.id === id ? { ...p, active: false } : p)));
-      showToast("Package deactivated");
+      const updated = await adminApi.updatePackage(p.id, {
+        name: p.name,
+        durationHours: p.durationHours,
+        graceHours: p.graceHours,
+        interestRateApr: rate,
+        active: p.active,
+      });
+      setPackages((list) => sortPackages(list.map((x) => (x.id === p.id ? updated : x))));
+      showToast(`Saved ${p.name}: ${rate.toFixed(2)}% p.a.`);
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
+  }
+
+  async function deactivatePackage(p: LoanPackage) {
+    try {
+      const updated = await adminApi.deletePackage(p.id);
+      setPackages((list) => sortPackages(list.map((x) => (x.id === p.id ? updated : x))));
+      showToast(`${p.name} deactivated`);
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
+  }
+
+  async function activatePkg(p: LoanPackage) {
+    try {
+      const updated = await adminApi.activatePackage(p.id);
+      setPackages((list) => sortPackages(list.map((x) => (x.id === p.id ? updated : x))));
+      showToast(`${p.name} activated`);
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
+  }
+
+  async function applyBulkRate() {
+    const rate = parseFloat(bulkRate);
+    if (Number.isNaN(rate) || rate < 0) {
+      showToast("Enter a valid rate");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Set ALL packages to ${rate.toFixed(2)}% p.a.? This only affects new loans under each package.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await adminApi.bulkSetPackageRates(rate);
+      setPackages(sortPackages(res.packages));
+      showToast(`Saved ${rate.toFixed(2)}% p.a. on ${res.count} package(s)`);
     } catch (err) {
       showToast(errorMessage(err));
     }
@@ -213,40 +284,99 @@ export function AdminPage() {
         <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
           Loan packages
         </div>
+        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 }}>
+          Ordered by duration. Each package has its own interest rate for new loans.
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+          <input
+            className="field-input mono"
+            type="number"
+            placeholder="Bulk APR %"
+            value={bulkRate}
+            onChange={(e) => setBulkRate(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <button
+            className="btn btn-outline"
+            style={{ padding: "8px 12px", whiteSpace: "nowrap", fontSize: 12.5 }}
+            onClick={applyBulkRate}
+          >
+            Apply to all
+          </button>
+        </div>
+
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {packages.map((p) => (
             <div
               key={p.id}
               className="card"
-              style={{
-                padding: "10px 12px",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                opacity: p.active ? 1 : 0.55,
-              }}
+              style={{ padding: "10px 12px", opacity: p.active ? 1 : 0.65 }}
             >
-              <div>
-                <div style={{ fontSize: 13.5, fontWeight: 500 }}>
-                  {p.name} {!p.active && "(inactive)"}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 8,
+                }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 500 }}>
+                    {p.name} {!p.active && "(inactive)"}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>
+                    {formatDuration(p.durationHours)}
+                    {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+                    <input
+                      className="field-input mono"
+                      type="number"
+                      defaultValue={Number(p.interestRateApr ?? 0)}
+                      key={`${p.id}-${p.interestRateApr}`}
+                      id={`rate-${p.id}`}
+                      style={{ width: 88, padding: "6px 8px", fontSize: 12 }}
+                    />
+                    <span style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>% p.a.</span>
+                    <button
+                      className="btn btn-outline"
+                      style={{ padding: "5px 10px", fontSize: 11 }}
+                      onClick={() => {
+                        const el = document.getElementById(
+                          `rate-${p.id}`,
+                        ) as HTMLInputElement | null;
+                        savePackageRate(p, el?.value ?? "");
+                      }}
+                    >
+                      Save rate
+                    </button>
+                  </div>
                 </div>
-                <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>
-                  {formatDuration(p.durationHours)}
-                  {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""}
+                <div>
+                  {p.active ? (
+                    <button
+                      className="btn btn-outline"
+                      style={{ padding: "6px 10px", fontSize: 11.5 }}
+                      onClick={() => deactivatePackage(p)}
+                    >
+                      Deactivate
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-primary"
+                      style={{ padding: "6px 10px", fontSize: 11.5 }}
+                      onClick={() => activatePkg(p)}
+                    >
+                      Activate
+                    </button>
+                  )}
                 </div>
               </div>
-              {p.active && (
-                <button
-                  className="btn btn-outline"
-                  style={{ padding: "6px 10px", fontSize: 11.5 }}
-                  onClick={() => deactivatePackage(p.id)}
-                >
-                  Deactivate
-                </button>
-              )}
             </div>
           ))}
         </div>
+
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
           <input
             className="field-input"
@@ -254,22 +384,30 @@ export function AdminPage() {
             value={newPkg.name}
             onChange={(e) => setNewPkg((x) => ({ ...x, name: e.target.value }))}
           />
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
               className="field-input mono"
               type="number"
-              placeholder="Duration hours"
+              placeholder="Hours"
               value={newPkg.durationHours}
               onChange={(e) => setNewPkg((x) => ({ ...x, durationHours: e.target.value }))}
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: 72 }}
             />
             <input
               className="field-input mono"
               type="number"
-              placeholder="Grace hours"
+              placeholder="Grace h"
               value={newPkg.graceHours}
               onChange={(e) => setNewPkg((x) => ({ ...x, graceHours: e.target.value }))}
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: 72 }}
+            />
+            <input
+              className="field-input mono"
+              type="number"
+              placeholder="APR %"
+              value={newPkg.interestRateApr}
+              onChange={(e) => setNewPkg((x) => ({ ...x, interestRateApr: e.target.value }))}
+              style={{ flex: 1, minWidth: 72 }}
             />
             <button className="btn btn-primary" style={{ padding: "0 14px" }} onClick={addPackage}>
               Add
@@ -289,7 +427,7 @@ export function AdminPage() {
             onSave={(v) => saveSettings({ investAnnualRatePct: v })}
           />
           <NumField
-            label="Loan interest rate (% p.a.)"
+            label="Default loan rate for new packages only (% p.a.)"
             value={Number(settings.loanAnnualRatePct)}
             onSave={(v) => saveSettings({ loanAnnualRatePct: v })}
           />

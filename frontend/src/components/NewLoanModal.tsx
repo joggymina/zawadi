@@ -28,8 +28,9 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
     publicApi
       .getPackages()
       .then((list) => {
-        setPackages(list);
-        if (list[0]) setPackageId(list[0].id);
+        const sorted = [...list].sort((a, b) => a.durationHours - b.durationHours);
+        setPackages(sorted);
+        if (sorted[0]) setPackageId(sorted[0].id);
       })
       .catch(() => setError("Could not load loan packages."));
   }, []);
@@ -110,13 +111,15 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
             {packages.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} ({formatDuration(p.durationHours)}
-                {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""})
+                {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""} ·{" "}
+                {Number(p.interestRateApr ?? 0).toFixed(1)}% p.a.)
               </option>
             ))}
           </select>
           {selected && (
             <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
-              Repay within {formatDuration(selected.durationHours)} after the loan is fully funded.
+              Repay within {formatDuration(selected.durationHours)} after the loan is fully funded ·{" "}
+              {Number(selected.interestRateApr ?? 0).toFixed(2)}% p.a.
             </div>
           )}
         </div>

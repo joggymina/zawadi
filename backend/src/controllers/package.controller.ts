@@ -8,21 +8,28 @@ export const packageSchema = z.object({
   name: z.string().min(1).max(80),
   durationHours: z.number().int().positive().max(24 * 365 * 5),
   graceHours: z.number().int().min(0).max(24 * 90).optional(),
+  interestRateApr: z.number().min(0).max(100).optional(),
   active: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
 });
 
+export const bulkRateSchema = z.object({
+  interestRateApr: z.number().min(0).max(100),
+});
+
+const orderByDuration = { durationHours: "asc" as const };
+
 export async function listPublicPackages(_req: Request, res: Response) {
   const packages = await prisma.loanPackage.findMany({
     where: { active: true },
-    orderBy: { sortOrder: "asc" },
+    orderBy: orderByDuration,
   });
   return res.json(packages);
 }
 
 export async function listAdminPackages(_req: Request, res: Response) {
   const packages = await prisma.loanPackage.findMany({
-    orderBy: { sortOrder: "asc" },
+    orderBy: orderByDuration,
   });
   return res.json(packages);
 }
@@ -34,14 +41,15 @@ export async function createPackage(req: Request, res: Response) {
       name: body.name,
       durationHours: body.durationHours,
       graceHours: body.graceHours ?? 0,
+      interestRateApr: body.interestRateApr ?? 18,
       active: body.active ?? true,
-      sortOrder: body.sortOrder ?? 0,
+      sortOrder: body.sortOrder ?? body.durationHours,
     },
   });
   await writeAudit({
     userId: req.user!.id,
     action: "ADMIN_PACKAGE_CREATE",
-    metadata: { id: pkg.id, name: pkg.name },
+    metadata: { id: pkg.id, name: pkg.name, interestRateApr: Number(pkg.interestRateApr) },
     ip: req.ip,
   });
   return res.status(201).json(pkg);
@@ -58,32 +66,72 @@ export async function updatePackage(req: Request, res: Response) {
       name: body.name,
       durationHours: body.durationHours,
       graceHours: body.graceHours ?? existing.graceHours,
+      interestRateApr:
+        body.interestRateApr !== undefined ? body.interestRateApr : existing.interestRateApr,
       active: body.active ?? existing.active,
-      sortOrder: body.sortOrder ?? existing.sortOrder,
+      sortOrder: body.sortOrder ?? body.durationHours ?? existing.sortOrder,
     },
   });
   await writeAudit({
     userId: req.user!.id,
     action: "ADMIN_PACKAGE_UPDATE",
-    metadata: { id: pkg.id },
+    metadata: {
+      id: pkg.id,
+      interestRateApr: Number(pkg.interestRateApr),
+      active: pkg.active,
+    },
     ip: req.ip,
   });
   return res.json(pkg);
 }
 
+/** Soft-deactivate */
 export async function deletePackage(req: Request, res: Response) {
   const existing = await prisma.loanPackage.findUnique({ where: { id: req.params.id } });
   if (!existing) throw new AppError("Package not found.", 404);
 
-  await prisma.loanPackage.update({
+  const pkg = await prisma.loanPackage.update({
     where: { id: req.params.id },
     data: { active: false },
   });
   await writeAudit({
     userId: req.user!.id,
     action: "ADMIN_PACKAGE_DEACTIVATE",
-    metadata: { id: req.params.id },
+    metadata: { id: pkg.id },
     ip: req.ip,
   });
-  return res.status(204).send();
+  return res.json(pkg);
+}
+
+export async function activatePackage(req: Request, res: Response) {
+  const existing = await prisma.loanPackage.findUnique({ where: { id: req.params.id } });
+  if (!existing) throw new AppError("Package not found.", 404);
+
+  const pkg = await prisma.loanPackage.update({
+    where: { id: req.params.id },
+    data: { active: true },
+  });
+  await writeAudit({
+    userId: req.user!.id,
+    action: "ADMIN_PACKAGE_ACTIVATE",
+    metadata: { id: pkg.id },
+    ip: req.ip,
+  });
+  return res.json(pkg);
+}
+
+/** Apply one APR to every package (active + inactive) */
+export async function bulkSetPackageRates(req: Request, res: Response) {
+  const { interestRateApr } = req.body as z.infer<typeof bulkRateSchema>;
+  const result = await prisma.loanPackage.updateMany({
+    data: { interestRateApr },
+  });
+  await writeAudit({
+    userId: req.user!.id,
+    action: "ADMIN_PACKAGE_BULK_RATE",
+    metadata: { interestRateApr, count: result.count },
+    ip: req.ip,
+  });
+  const packages = await prisma.loanPackage.findMany({ orderBy: orderByDuration });
+  return res.json({ count: result.count, interestRateApr, packages });
 }

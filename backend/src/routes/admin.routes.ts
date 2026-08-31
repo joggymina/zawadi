@@ -22,7 +22,10 @@ import {
   createPackage,
   updatePackage,
   deletePackage,
+  activatePackage,
+  bulkSetPackageRates,
   packageSchema,
+  bulkRateSchema,
 } from "../controllers/package.controller";
 
 const router = Router();
@@ -42,9 +45,12 @@ router.post("/repayments/:id/reject", asyncHandler(rejectRepayment));
 router.get("/users", asyncHandler(listUsers));
 router.patch("/users/:id/kyc", validateBody(setKycSchema), asyncHandler(setUserKyc));
 
+// Packages — bulk-rate before :id routes
 router.get("/packages", asyncHandler(listAdminPackages));
+router.post("/packages/bulk-rate", validateBody(bulkRateSchema), asyncHandler(bulkSetPackageRates));
 router.post("/packages", validateBody(packageSchema), asyncHandler(createPackage));
 router.put("/packages/:id", validateBody(packageSchema), asyncHandler(updatePackage));
+router.post("/packages/:id/activate", asyncHandler(activatePackage));
 router.delete("/packages/:id", asyncHandler(deletePackage));
 
 export default router;

@@ -57,7 +57,7 @@ export async function createLoanRequest(params: {
       borrowerId: params.borrowerId,
       amount,
       purpose: params.purpose,
-      interestRateApr: settings.loanAnnualRatePct,
+      interestRateApr: pkg.interestRateApr,
       status: "OPEN",
       packageId: pkg.id,
       guarantors: {

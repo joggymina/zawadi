@@ -151,15 +151,16 @@ enum LoanStatus {
 }
 
 model LoanPackage {
-  id             String   @id @default(uuid())
-  name           String
-  durationHours  Int
-  graceHours     Int      @default(0)
-  active         Boolean  @default(true)
-  sortOrder      Int      @default(0)
-  createdAt      DateTime @default(now())
-
-  loans Loan[]
+  id              String   @id @default(uuid())
+  name            String
+  durationHours   Int
+  graceHours      Int      @default(0)
+  /// APR for loans created under this package (% p.a.)
+  interestRateApr Decimal  @db.Decimal(6, 3) @default(18)
+  active          Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  loans           Loan[]
 }
 
 model Loan {
