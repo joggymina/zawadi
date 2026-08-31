@@ -35,4 +35,16 @@ router.post("/repayments/:id/reject", asyncHandler(rejectRepayment));
 router.get("/users", asyncHandler(listUsers));
 router.patch("/users/:id/kyc", validateBody(setKycSchema), asyncHandler(setUserKyc));
 
+import {
+  listAdminPackages,
+  createPackage,
+  updatePackage,
+  deletePackage,
+  packageSchema,
+} from "../controllers/package.controller";
+
+router.get("/packages", asyncHandler(listAdminPackages));
+router.post("/packages", validateBody(packageSchema), asyncHandler(createPackage));
+router.put("/packages/:id", validateBody(packageSchema), asyncHandler(updatePackage));
+router.delete("/packages/:id", asyncHandler(deletePackage));
 export default router;
