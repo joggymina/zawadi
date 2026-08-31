@@ -46,6 +46,7 @@ export interface LoanPackage {
   name: string;
   durationHours: number;
   graceHours: number;
+  interestRateApr: string;
   active: boolean;
   sortOrder: number;
 }
