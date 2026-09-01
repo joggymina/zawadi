@@ -5,7 +5,7 @@ import { getAdminSettings, updateAdminSettings } from "../services/adminSettings
 import * as loanService from "../services/loan.service";
 import { writeAudit } from "../services/audit.service";
 import * as defaultSettlement from "../services/defaultSettlement.service";
-// ...any other single imports you need (not duplicated)
+import { AppError } from "../middleware/errorHandler";
 
 export const updateSettingsSchema = z.object({
   investAnnualRatePct: z.number().min(0).max(100).optional(),

@@ -20,12 +20,14 @@ import {
   offerSchema,
 } from "../controllers/admin.controller";
 import {
-  listPackages,
+  listAdminPackages,
   createPackage,
   updatePackage,
   deletePackage,
   activatePackage,
   bulkSetPackageRates,
+  packageSchema,
+  bulkRateSchema,
 } from "../controllers/package.controller";
 
 const router = Router();
@@ -45,12 +47,12 @@ router.post("/repayments/:id/reject", asyncHandler(rejectRepayment));
 router.get("/users", asyncHandler(listUsers));
 router.patch("/users/:id/kyc", asyncHandler(setUserKyc));
 
-router.get("/packages", asyncHandler(listPackages));
-router.post("/packages", asyncHandler(createPackage));
-router.put("/packages/:id", asyncHandler(updatePackage));
+router.get("/packages", asyncHandler(listAdminPackages));
+router.post("/packages", validateBody(packageSchema), asyncHandler(createPackage));
+router.put("/packages/:id", validateBody(packageSchema), asyncHandler(updatePackage));
 router.delete("/packages/:id", asyncHandler(deletePackage));
 router.post("/packages/:id/activate", asyncHandler(activatePackage));
-router.post("/packages/bulk-rate", asyncHandler(bulkSetPackageRates));
+router.post("/packages/bulk-rate", validateBody(bulkRateSchema), asyncHandler(bulkSetPackageRates));
 
 router.get("/defaults/candidates", asyncHandler(listDefaultCandidates));
 router.post("/defaults/run", asyncHandler(runAllDefaultSettlements));
