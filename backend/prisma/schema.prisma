@@ -196,13 +196,14 @@ model Loan {
 // Snapshot of the guarantor's qualifying balance at pledge time, so a
 // guarantor withdrawing funds later doesn't silently invalidate history.
 model LoanGuarantor {
-  id                 String   @id @default(uuid())
-  loanId             String
-  loan               Loan     @relation(fields: [loanId], references: [id])
-  userId             String
-  user               User     @relation(fields: [userId], references: [id])
-  balanceAtPledge    Decimal  @db.Decimal(18, 2)
-  pledgedAt          DateTime @default(now())
+  id              String    @id @default(uuid())
+  loanId          String
+  userId          String
+  balanceAtPledge Decimal   @db.Decimal(18, 2)
+  status          String    @default("PENDING") // PENDING | ACCEPTED | DECLINED
+  respondedAt     DateTime?
+  loan            Loan      @relation(fields: [loanId], references: [id])
+  user            User      @relation(fields: [userId], references: [id])
 
   @@unique([loanId, userId])
 }
