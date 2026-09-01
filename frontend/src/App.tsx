@@ -14,6 +14,9 @@ import { AdminPage } from "./pages/AdminPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 
 import { AdminPackagesPage } from "./pages/AdminPackagesPage";
+import { AdminRatesPage } from "./pages/AdminRatesPage";
+import { AdminOffersPage } from "./pages/AdminOffersPage";
+
 
 export default function App() {
   return (
@@ -37,9 +40,12 @@ export default function App() {
             </Route>
 // under AdminLayout routes:
             <Route path="/admin" element={<AdminLayout />}>
+              // under AdminLayout:
               <Route index element={<AdminPage />} />
               <Route path="users" element={<AdminUsersPage />} />
               <Route path="packages" element={<AdminPackagesPage />} />
+              <Route path="rates" element={<AdminRatesPage />} />
+              <Route path="offers" element={<AdminOffersPage />} />
             </Route>
             
           </Routes>

@@ -136,6 +136,12 @@ export function AdminLayout() {
           <NavLink to="/admin/packages" style={navStyle}>
             Loan packages
           </NavLink>
+          <NavLink to="/admin/rates" style={navStyle}>
+            Rates &amp; fees
+          </NavLink>
+          <NavLink to="/admin/offers" style={navStyle}>
+            Grand offers
+          </NavLink>
 
         </nav>
       </header>
