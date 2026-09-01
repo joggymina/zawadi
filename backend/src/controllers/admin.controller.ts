@@ -4,51 +4,9 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { getAdminSettings, updateAdminSettings } from "../services/adminSettings.service";
 import * as loanService from "../services/loan.service";
-import { writeAudit } from "../services/audit.service";
 
+import * as defaultSettlement from "../services/defaultSettlement.service";import { writeAudit } from "../services/audit.service";
 import * as defaultSettlement from "../services/defaultSettlement.service";
-import { writeAudit } from "../services/audit.service";
-
-export async function listDefaultCandidates(_req: Request, res: Response) {
-  const list = await defaultSettlement.findDefaultCandidates();
-  return res.json(
-    list.map((l) => ({
-      id: l.id,
-      amount: l.amount,
-      dueAt: l.dueAt,
-      principalOwed: l.principalOwed,
-      interestOwed: l.interestOwed,
-      borrower: l.borrower,
-      package: l.package
-        ? { id: l.package.id, name: l.package.name, graceHours: l.package.graceHours }
-        : null,
-    })),
-  );
-}
-
-export async function settleDefault(req: Request, res: Response) {
-  const result = await defaultSettlement.settleDefaultedLoan({
-    loanId: req.params.id,
-    triggeredById: req.user!.id,
-  });
-  return res.json({
-    loanId: result.loanId,
-    status: result.status,
-    collected: result.collected,
-    uncollected: result.uncollected,
-  });
-}
-
-export async function runAllDefaultSettlements(req: Request, res: Response) {
-  const results = await defaultSettlement.runDefaultSettlements();
-  await writeAudit({
-    userId: req.user!.id,
-    action: "LOAN_DEFAULT_SETTLE_BATCH",
-    metadata: { count: results.length },
-    ip: req.ip,
-  });
-  return res.json({ results });
-}
 
 
 export const updateSettingsSchema = z.object({
@@ -216,4 +174,45 @@ export async function setUserKyc(req: Request, res: Response) {
   });
 
   return res.json(updated);
+}
+
+export async function listDefaultCandidates(_req: Request, res: Response) {
+  const list = await defaultSettlement.findDefaultCandidates();
+  return res.json(
+    list.map((l) => ({
+      id: l.id,
+      amount: l.amount,
+      dueAt: l.dueAt,
+      principalOwed: l.principalOwed,
+      interestOwed: l.interestOwed,
+      borrower: l.borrower,
+      package: l.package
+        ? { id: l.package.id, name: l.package.name, graceHours: l.package.graceHours }
+        : null,
+    })),
+  );
+}
+
+export async function settleDefault(req: Request, res: Response) {
+  const result = await defaultSettlement.settleDefaultedLoan({
+    loanId: req.params.id,
+    triggeredById: req.user!.id,
+  });
+  return res.json({
+    loanId: result.loanId,
+    status: result.status,
+    collected: result.collected,
+    uncollected: result.uncollected,
+  });
+}
+
+export async function runAllDefaultSettlements(req: Request, res: Response) {
+  const results = await defaultSettlement.runDefaultSettlements();
+  await writeAudit({
+    userId: req.user!.id,
+    action: "LOAN_DEFAULT_SETTLE_BATCH",
+    metadata: { count: results.length },
+    ip: req.ip,
+  });
+  return res.json({ results });
 }

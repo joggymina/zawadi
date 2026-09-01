@@ -13,20 +13,20 @@ import {
   rejectRepayment,
   listUsers,
   setUserKyc,
-  updateSettingsSchema,
-  offerSchema,
-  setKycSchema,
-} from "../controllers/admin.controller";
-import {
-  listAdminPackages,
+  listPackages,
   createPackage,
   updatePackage,
   deletePackage,
   activatePackage,
   bulkSetPackageRates,
-  packageSchema,
-  bulkRateSchema,
-} from "../controllers/package.controller";
+  listDefaultCandidates,
+  settleDefault,
+  runAllDefaultSettlements,
+  updateSettingsSchema,
+  offerSchema,
+  // add other schemas you already export
+} from "../controllers/admin.controller";
+// If packages live in package.controller, import those from there instead.
 
 const router = Router();
 router.use(authenticate, requireAdmin);
@@ -43,16 +43,16 @@ router.post("/repayments/:id/approve", asyncHandler(approveRepayment));
 router.post("/repayments/:id/reject", asyncHandler(rejectRepayment));
 
 router.get("/users", asyncHandler(listUsers));
-router.patch("/users/:id/kyc", validateBody(setKycSchema), asyncHandler(setUserKyc));
+router.patch("/users/:id/kyc", asyncHandler(setUserKyc));
 
-// Packages — bulk-rate before :id routes
-router.get("/packages", asyncHandler(listAdminPackages));
-router.post("/packages/bulk-rate", validateBody(bulkRateSchema), asyncHandler(bulkSetPackageRates));
-router.post("/packages", validateBody(packageSchema), asyncHandler(createPackage));
-router.put("/packages/:id", validateBody(packageSchema), asyncHandler(updatePackage));
-router.post("/packages/:id/activate", asyncHandler(activatePackage));
+router.get("/packages", asyncHandler(listPackages));
+router.post("/packages", asyncHandler(createPackage));
+router.put("/packages/:id", asyncHandler(updatePackage));
 router.delete("/packages/:id", asyncHandler(deletePackage));
+router.post("/packages/:id/activate", asyncHandler(activatePackage));
+router.post("/packages/bulk-rate", asyncHandler(bulkSetPackageRates));
 
+// Phase D
 router.get("/defaults/candidates", asyncHandler(listDefaultCandidates));
 router.post("/defaults/run", asyncHandler(runAllDefaultSettlements));
 router.post("/loans/:id/settle-default", asyncHandler(settleDefault));
