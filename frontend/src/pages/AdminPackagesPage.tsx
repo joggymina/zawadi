@@ -99,29 +99,59 @@ export function AdminPackagesPage() {
     }
   }
 
-  function applyRatesToState(list: LoanPackage[], rate: number) {
-    const sorted = sortPackages(list);
-    setPackages(sorted);
+  function setDraftsFromList(list: LoanPackage[]) {
     const drafts: Record<string, string> = {};
-    sorted.forEach((pkg) => {
-      drafts[pkg.id] = String(Number(pkg.interestRateApr ?? rate));
+    list.forEach((pkg) => {
+      drafts[pkg.id] = String(Number(pkg.interestRateApr ?? 0));
     });
     setRateDrafts(drafts);
   }
 
-  function requestRateChange(sourceName: string, rateStr: string) {
+  /** Save rate for this package only */
+  function requestSaveOne(p: LoanPackage, rateStr: string) {
     const rate = parseFloat(rateStr);
     if (Number.isNaN(rate) || rate < 0 || rate > 100) {
       showToast("Enter a rate between 0 and 100");
       return;
     }
     askConfirm({
-      title: "Update interest rates?",
-      body: `Set every loan package to ${rate.toFixed(2)}% p.a.?\n\nTriggered from “${sourceName}”.\nThis keeps package rates balanced (no leakage). Only new loans use the new rate.`,
+      title: "Update this package rate?",
+      body: `Set “${p.name}” only to ${rate.toFixed(2)}% p.a.?\n\nOther packages are unchanged. Only new loans under this package use the new rate.`,
+      confirmLabel: "Save this package",
+      onConfirm: async () => {
+        const updated = await adminApi.updatePackage(p.id, {
+          name: p.name,
+          durationHours: p.durationHours,
+          graceHours: p.graceHours,
+          interestRateApr: rate,
+          active: p.active,
+        });
+        setPackages((list) => {
+          const next = sortPackages(list.map((x) => (x.id === p.id ? updated : x)));
+          setDraftsFromList(next);
+          return next;
+        });
+        showToast(`Saved ${p.name}: ${rate.toFixed(2)}% p.a.`);
+      },
+    });
+  }
+
+  /** Apply this row’s rate to every package */
+  function requestSaveAll(sourceName: string, rateStr: string) {
+    const rate = parseFloat(rateStr);
+    if (Number.isNaN(rate) || rate < 0 || rate > 100) {
+      showToast("Enter a rate between 0 and 100");
+      return;
+    }
+    askConfirm({
+      title: "Update all package rates?",
+      body: `Set every loan package to ${rate.toFixed(2)}% p.a.?\n\nTriggered from “${sourceName}”. Only new loans use the new rate.`,
       confirmLabel: "Save all rates",
       onConfirm: async () => {
         const res = await adminApi.bulkSetPackageRates(rate);
-        applyRatesToState(res.packages, rate);
+        const sorted = sortPackages(res.packages);
+        setPackages(sorted);
+        setDraftsFromList(sorted);
         showToast(`All packages set to ${rate.toFixed(2)}% p.a. (${res.count} updated)`);
       },
     });
@@ -131,11 +161,13 @@ export function AdminPackagesPage() {
     const rate = defaultLoanRate;
     askConfirm({
       title: "Reset all package rates?",
-      body: `Set every package to the default loan rate of ${rate.toFixed(2)}% p.a.?\n\nThis aligns packages with Rates & fees and avoids rate leakage on new loans.`,
+      body: `Set every package to the default loan rate of ${rate.toFixed(2)}% p.a.?`,
       confirmLabel: "Reset to default",
       onConfirm: async () => {
         const res = await adminApi.bulkSetPackageRates(rate);
-        applyRatesToState(res.packages, rate);
+        const sorted = sortPackages(res.packages);
+        setPackages(sorted);
+        setDraftsFromList(sorted);
         showToast(`All packages reset to ${rate.toFixed(2)}% p.a.`);
       },
     });
@@ -157,7 +189,7 @@ export function AdminPackagesPage() {
   function requestActivate(p: LoanPackage) {
     askConfirm({
       title: "Activate package?",
-      body: `“${p.name}” will be available again for new loan requests at ${Number(p.interestRateApr ?? 0).toFixed(2)}% p.a.`,
+      body: `“${p.name}” will be available again at ${Number(p.interestRateApr ?? 0).toFixed(2)}% p.a.`,
       confirmLabel: "Activate",
       onConfirm: async () => {
         const updated = await adminApi.activatePackage(p.id);
@@ -192,8 +224,11 @@ export function AdminPackagesPage() {
           active: true,
           sortOrder: durationHours,
         });
-        setPackages((list) => sortPackages([...list, pkg]));
-        setRateDrafts((d) => ({ ...d, [pkg.id]: String(interestRateApr) }));
+        setPackages((list) => {
+          const next = sortPackages([...list, pkg]);
+          setDraftsFromList(next);
+          return next;
+        });
         setNewPkg({
           name: "",
           durationHours: "168",
@@ -263,13 +298,13 @@ export function AdminPackagesPage() {
         </Link>
       </div>
 
-      <div style={{ fontSize: 12.5, color: "var(--ink-soft)" }}>
-        Sorted by duration. Saving a rate updates <strong>all</strong> packages so rates stay
-        balanced (no leakage). Default rate:{" "}
-        <strong>{defaultLoanRate.toFixed(2)}% p.a.</strong> (from Rates &amp; fees).
+      <div style={{ fontSize: 12.5, color: "var(--ink-soft)", lineHeight: 1.45 }}>
+        Sorted by duration. <strong>Save rate</strong> updates one package;{" "}
+        <strong>Apply to all</strong> sets every package to that value. Default rate:{" "}
+        <strong>{defaultLoanRate.toFixed(2)}% p.a.</strong>
       </div>
 
-      {packages.length > 0 && (!ratesInSync || !matchesDefault) && (
+      {packages.length > 0 && !ratesInSync && (
         <div
           style={{
             background: "var(--amber-pale)",
@@ -281,18 +316,9 @@ export function AdminPackagesPage() {
             lineHeight: 1.45,
           }}
         >
-          {!ratesInSync ? (
-            <>
-              <strong>Rate leakage detected.</strong> Packages are not on the same APR (
-              {uniqueRates.map((r) => `${r}%`).join(", ")}). Use <strong>Save rate</strong> or{" "}
-              <strong>Reset to default</strong>.
-            </>
-          ) : (
-            <>
-              <strong>Rates differ from default.</strong> Packages are at{" "}
-              {Number(syncedRate).toFixed(2)}% p.a.; default is {defaultLoanRate.toFixed(2)}% p.a.
-            </>
-          )}
+          <strong>Packages use different APRs</strong> ({uniqueRates.map((r) => `${r}%`).join(", ")}
+          ). That is allowed. Use <strong>Apply to all</strong> or <strong>Reset to default</strong>{" "}
+          if you want them aligned.
         </div>
       )}
 
@@ -306,7 +332,23 @@ export function AdminPackagesPage() {
             color: "var(--green-deep)",
           }}
         >
-          All packages balanced at {defaultLoanRate.toFixed(2)}% p.a. (matches default).
+          All packages at {defaultLoanRate.toFixed(2)}% p.a. (matches default).
+        </div>
+      )}
+
+      {packages.length > 0 && ratesInSync && !matchesDefault && (
+        <div
+          style={{
+            background: "var(--amber-pale)",
+            border: "1px solid #e0c080",
+            borderRadius: 10,
+            padding: "10px 12px",
+            fontSize: 12.5,
+            color: "#7a5a2e",
+          }}
+        >
+          All packages at {Number(syncedRate).toFixed(2)}% p.a.; default is{" "}
+          {defaultLoanRate.toFixed(2)}% p.a.
         </div>
       )}
 
@@ -346,6 +388,7 @@ export function AdminPackagesPage() {
                   {" · "}
                   {Number(p.interestRateApr ?? 0).toFixed(2)}% p.a.
                 </div>
+
                 <div
                   style={{
                     display: "flex",
@@ -372,10 +415,19 @@ export function AdminPackagesPage() {
                     className="btn btn-outline"
                     style={{ padding: "6px 12px", fontSize: 12 }}
                     onClick={() =>
-                      requestRateChange(p.name, rateDrafts[p.id] ?? String(p.interestRateApr))
+                      requestSaveOne(p, rateDrafts[p.id] ?? String(p.interestRateApr))
                     }
                   >
                     Save rate
+                  </button>
+                  <button
+                    className="btn btn-outline"
+                    style={{ padding: "6px 12px", fontSize: 12 }}
+                    onClick={() =>
+                      requestSaveAll(p.name, rateDrafts[p.id] ?? String(p.interestRateApr))
+                    }
+                  >
+                    Apply to all
                   </button>
                 </div>
               </div>
