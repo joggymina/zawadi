@@ -19,5 +19,8 @@ router.post("/register", authLimiter, validateBody(registerSchema), asyncHandler
 router.post("/login", authLimiter, validateBody(loginSchema), asyncHandler(login));
 router.post("/refresh", asyncHandler(refresh));
 router.post("/logout", asyncHandler(logout));
+router.get("/defaults/candidates", asyncHandler(listDefaultCandidates));
+router.post("/defaults/run", asyncHandler(runAllDefaultSettlements));
+router.post("/loans/:id/settle-default", asyncHandler(settleDefault));
 
 export default router;
