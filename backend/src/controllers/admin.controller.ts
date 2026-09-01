@@ -5,8 +5,8 @@ import { AppError } from "../middleware/errorHandler";
 import { getAdminSettings, updateAdminSettings } from "../services/adminSettings.service";
 import * as loanService from "../services/loan.service";
 
-import * as defaultSettlement from "../services/defaultSettlement.service";import { writeAudit } from "../services/audit.service";
 import * as defaultSettlement from "../services/defaultSettlement.service";
+import { writeAudit } from "../services/audit.service";
 
 
 export const updateSettingsSchema = z.object({
