@@ -110,3 +110,30 @@ export function bulkSetPackageRates(interestRateApr: number) {
     { method: "POST", body: { interestRateApr } },
   );
 }
+
+export function listDefaultCandidates() {
+  return request<
+    {
+      id: string;
+      amount: string;
+      dueAt: string;
+      principalOwed: string;
+      interestOwed: string;
+      borrower?: { id: string; username: string };
+      package?: { id: string; name: string; graceHours: number } | null;
+    }[]
+  >("/api/admin/defaults/candidates");
+}
+
+export function settleDefault(loanId: string) {
+  return request<{
+    loanId: string;
+    status: string;
+    collected: string;
+    uncollected: string;
+  }>(`/api/admin/loans/${loanId}/settle-default`, { method: "POST" });
+}
+
+export function runAllDefaultSettlements() {
+  return request<{ results: unknown[] }>("/api/admin/defaults/run", { method: "POST" });
+}

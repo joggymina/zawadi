@@ -53,4 +53,8 @@ router.put("/packages/:id", validateBody(packageSchema), asyncHandler(updatePack
 router.post("/packages/:id/activate", asyncHandler(activatePackage));
 router.delete("/packages/:id", asyncHandler(deletePackage));
 
+router.get("/defaults/candidates", asyncHandler(listDefaultCandidates));
+router.post("/defaults/run", asyncHandler(runAllDefaultSettlements));
+router.post("/loans/:id/settle-default", asyncHandler(settleDefault));
+
 export default router;

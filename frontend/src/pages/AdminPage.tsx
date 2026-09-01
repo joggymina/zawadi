@@ -5,6 +5,16 @@ import type { LoanRepayment } from "../api/types";
 import { fmt, errorMessage } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 
+type DefaultCandidate = {
+  id: string;
+  amount: string;
+  dueAt: string | null;
+  principalOwed: string;
+  interestOwed: string;
+  borrower?: { id: string; username: string };
+  package?: { id: string; name: string; graceHours: number } | null;
+};
+
 type ConfirmState =
   | null
   | {
@@ -17,6 +27,7 @@ type ConfirmState =
 export function AdminPage() {
   const showToast = useToast();
   const [pending, setPending] = useState<LoanRepayment[]>([]);
+  const [defaults, setDefaults] = useState<DefaultCandidate[]>([]);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [error, setError] = useState("");
@@ -26,7 +37,12 @@ export function AdminPage() {
     setLoading(true);
     setError("");
     try {
-      setPending(await adminApi.listPendingRepayments());
+      const [pendingList, defaultList] = await Promise.all([
+        adminApi.listPendingRepayments(),
+        adminApi.listDefaultCandidates(),
+      ]);
+      setPending(pendingList);
+      setDefaults(defaultList);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -73,6 +89,32 @@ export function AdminPage() {
         await adminApi.rejectRepayment(id);
         setPending((p) => p.filter((r) => r.id !== id));
         showToast("Rejected — borrower refunded");
+      },
+    });
+  }
+
+  function settleOne(loanId: string) {
+    setConfirm({
+      title: "Settle this default?",
+      body: "Borrower balance, then guarantor holds, will be used to credit funders. This cannot be undone.",
+      confirmLabel: "Settle default",
+      onConfirm: async () => {
+        const r = await adminApi.settleDefault(loanId);
+        showToast(`Settled → ${r.status}`);
+        await load();
+      },
+    });
+  }
+
+  function settleAll() {
+    setConfirm({
+      title: "Settle all past-due loans?",
+      body: `Run default settlement for ${defaults.length} loan(s). Borrower and guarantor funds may be drawn.`,
+      confirmLabel: "Settle all",
+      onConfirm: async () => {
+        await adminApi.runAllDefaultSettlements();
+        showToast("Default settlement run finished");
+        await load();
       },
     });
   }
@@ -145,6 +187,68 @@ export function AdminPage() {
           </div>
         </div>
       )}
+
+      <section>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 8,
+          }}
+        >
+          <div className="display" style={{ fontSize: 16, fontWeight: 500 }}>
+            Past-due loans
+          </div>
+          {defaults.length > 0 && (
+            <button
+              className="btn btn-outline"
+              style={{ padding: "6px 12px", fontSize: 12 }}
+              onClick={settleAll}
+            >
+              Settle all
+            </button>
+          )}
+        </div>
+        {defaults.length === 0 ? (
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "var(--ink-soft)",
+              background: "var(--surface)",
+              borderRadius: 10,
+              padding: 12,
+            }}
+          >
+            No loans past due + grace.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {defaults.map((l) => (
+              <div key={l.id} className="card" style={{ padding: "10px 12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                  <span>@{l.borrower?.username}</span>
+                  <span className="mono">{fmt(l.amount)}</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                  Due {l.dueAt ? new Date(l.dueAt).toLocaleString() : "—"}
+                  {l.package ? ` · ${l.package.name}` : ""}
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 }}>
+                  Outstanding {fmt(Number(l.principalOwed) + Number(l.interestOwed))}
+                </div>
+                <button
+                  className="btn btn-primary"
+                  style={{ width: "100%", marginTop: 8, padding: "8px 0", fontSize: 12.5 }}
+                  onClick={() => settleOne(l.id)}
+                >
+                  Settle default
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section>
         <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>

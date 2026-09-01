@@ -7,6 +7,7 @@ import * as loanService from "../services/loan.service";
 import { writeAudit } from "../services/audit.service";
 
 import * as defaultSettlement from "../services/defaultSettlement.service";
+import { writeAudit } from "../services/audit.service";
 
 export async function listDefaultCandidates(_req: Request, res: Response) {
   const list = await defaultSettlement.findDefaultCandidates();
@@ -18,7 +19,9 @@ export async function listDefaultCandidates(_req: Request, res: Response) {
       principalOwed: l.principalOwed,
       interestOwed: l.interestOwed,
       borrower: l.borrower,
-      package: l.package,
+      package: l.package
+        ? { id: l.package.id, name: l.package.name, graceHours: l.package.graceHours }
+        : null,
     })),
   );
 }
@@ -28,7 +31,12 @@ export async function settleDefault(req: Request, res: Response) {
     loanId: req.params.id,
     triggeredById: req.user!.id,
   });
-  return res.json(result);
+  return res.json({
+    loanId: result.loanId,
+    status: result.status,
+    collected: result.collected,
+    uncollected: result.uncollected,
+  });
 }
 
 export async function runAllDefaultSettlements(req: Request, res: Response) {
@@ -41,6 +49,8 @@ export async function runAllDefaultSettlements(req: Request, res: Response) {
   });
   return res.json({ results });
 }
+
+
 export const updateSettingsSchema = z.object({
   investAnnualRatePct: z.number().min(0).max(100).optional(),
   loanAnnualRatePct: z.number().min(0).max(100).optional(),

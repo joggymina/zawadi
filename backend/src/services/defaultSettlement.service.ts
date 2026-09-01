@@ -20,7 +20,6 @@ function graceEnd(dueAt: Date, graceHours: number): Date {
   return new Date(dueAt.getTime() + graceHours * 60 * 60 * 1000);
 }
 
-/** Loans past due + grace that still need settlement. */
 export async function findDefaultCandidates(now = new Date()) {
   const loans = await prisma.loan.findMany({
     where: { status: "REPAYING", dueAt: { not: null } },
@@ -39,17 +38,14 @@ export async function findDefaultCandidates(now = new Date()) {
   });
 }
 
-/**
- * Settle one past-due loan: borrower → guarantor holds → funders.
- */
 export async function settleDefaultedLoan(params: {
   loanId: string;
-  triggeredById?: string; // admin user id if manual
+  triggeredById?: string;
   now?: Date;
 }) {
   const now = params.now ?? new Date();
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT id FROM "Loan" WHERE id = ${params.loanId} FOR UPDATE`;
 
     const loan = await tx.loan.findUnique({
@@ -71,7 +67,6 @@ export async function settleDefaultedLoan(params: {
       throw new AppError("Loan is still within term or grace period.", 422);
     }
 
-    // Accrue interest to now
     let interestOwed = loan.interestOwed;
     let lastAccrualAt = loan.lastAccrualAt;
     if (lastAccrualAt && loan.principalOwed.greaterThan(0)) {
@@ -95,12 +90,16 @@ export async function settleDefaultedLoan(params: {
           status: "REPAID",
         },
       });
-      return { loanId: loan.id, status: "REPAID" as const, collected: new Decimal(0) };
+      return {
+        loanId: loan.id,
+        status: "REPAID" as const,
+        collected: new Decimal(0),
+        uncollected: new Decimal(0),
+      };
     }
 
     let collected = new Decimal(0);
 
-    // 1) Borrower principal, then interest balance
     const borrowerAccount = await tx.investmentAccount.findUnique({
       where: { userId: loan.borrowerId },
     });
@@ -157,7 +156,6 @@ export async function settleDefaultedLoan(params: {
       }
     }
 
-    // 2) Guarantor holds (up to balanceAtPledge each), pro-rata of shortfall
     if (remaining.greaterThan(0) && loan.guarantors.length > 0) {
       const shortfall = remaining;
       const totalHold = loan.guarantors.reduce(
@@ -167,10 +165,9 @@ export async function settleDefaultedLoan(params: {
 
       for (const g of loan.guarantors) {
         if (remaining.lessThanOrEqualTo(0)) break;
-        const share =
-          totalHold.greaterThan(0)
-            ? shortfall.mul(g.balanceAtPledge).div(totalHold).toDecimalPlaces(2)
-            : new Decimal(0);
+        const share = totalHold.greaterThan(0)
+          ? shortfall.mul(g.balanceAtPledge).div(totalHold).toDecimalPlaces(2)
+          : new Decimal(0);
         const cap = Decimal.min(share, g.balanceAtPledge);
         if (cap.lessThanOrEqualTo(0)) continue;
 
@@ -201,7 +198,6 @@ export async function settleDefaultedLoan(params: {
       }
     }
 
-    // 3) Credit funders pro-rata of amount collected
     if (collected.greaterThan(0) && loan.fundings.length > 0) {
       const totalFunded = loan.fundings.reduce((s, f) => s.plus(f.amount), new Decimal(0));
       const denom = totalFunded.greaterThan(0) ? totalFunded : loan.amount;
@@ -231,7 +227,6 @@ export async function settleDefaultedLoan(params: {
       }
     }
 
-    // Zero remaining owed for accounting close; status DEFAULTED if any shortfall left unpaid
     const finalStatus = remaining.greaterThan(0.01) ? "DEFAULTED" : "REPAID";
 
     await tx.loan.update({
@@ -250,35 +245,38 @@ export async function settleDefaultedLoan(params: {
       collected,
       uncollected: remaining,
     };
-  }).then(async (result) => {
-    if (params.triggeredById) {
-      await writeAudit({
-        userId: params.triggeredById,
-        action: "LOAN_DEFAULT_SETTLE",
-        metadata: {
-          loanId: result.loanId,
-          status: result.status,
-          collected: Number(result.collected),
-          uncollected: Number(result.uncollected ?? 0),
-        },
-      });
-    }
-    return result;
   });
+
+  if (params.triggeredById) {
+    await writeAudit({
+      userId: params.triggeredById,
+      action: "LOAN_DEFAULT_SETTLE",
+      metadata: {
+        loanId: result.loanId,
+        status: result.status,
+        collected: Number(result.collected),
+        uncollected: Number(result.uncollected),
+      },
+    });
+  }
+
+  return result;
 }
 
-/** Run settlement for all eligible loans (cron). */
 export async function runDefaultSettlements(now = new Date()) {
   const candidates = await findDefaultCandidates(now);
-  const results = [];
+  const results: Array<Record<string, unknown>> = [];
   for (const loan of candidates) {
     try {
       const r = await settleDefaultedLoan({ loanId: loan.id, now });
-      results.push(r);
+      results.push({
+        loanId: r.loanId,
+        status: r.status,
+        collected: r.collected.toFixed(2),
+        uncollected: r.uncollected.toFixed(2),
+      });
       // eslint-disable-next-line no-console
-      console.log(
-        `Default settled ${loan.id} → ${r.status}, collected ${r.collected.toFixed(2)}`,
-      );
+      console.log(`Default settled ${loan.id} → ${r.status}`);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`Default settle failed for ${loan.id}:`, err);
