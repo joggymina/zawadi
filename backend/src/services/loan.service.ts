@@ -437,6 +437,9 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
 }
 
 export async function approveRepayment(params: { repaymentId: string; adminId: string }) {
+  const settings = await getAdminSettings();
+  const sharePct = Number(settings.platformInterestSharePct ?? 10) / 100;
+
   return prisma.$transaction(async (tx) => {
     const repayment = await tx.loanRepayment.findUnique({
       where: { id: params.repaymentId },
@@ -447,22 +450,34 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
       throw new AppError("This repayment has already been reviewed.", 422);
     }
 
+    const total = repayment.amount;
+    const interestPart = Decimal.min(total, repayment.interestOwedBefore);
+    const principalPart = total.minus(interestPart);
+
     for (const d of repayment.distributions) {
+      if (total.lessThanOrEqualTo(0) || d.amount.lessThanOrEqualTo(0)) continue;
+
+      const dPrincipal = principalPart.mul(d.amount).div(total).toDecimalPlaces(2);
+      const dInterest = interestPart.mul(d.amount).div(total).toDecimalPlaces(2);
+      const fee = dInterest.mul(sharePct).toDecimalPlaces(2);
+      const credit = dPrincipal.plus(dInterest).minus(fee);
+      if (credit.lessThanOrEqualTo(0)) continue;
+
       const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
         where: { userId: d.funderId },
       });
       await tx.investmentAccount.update({
         where: { userId: d.funderId },
-        data: { principalBalance: { increment: d.amount } },
+        data: { principalBalance: { increment: credit } },
       });
       await tx.transaction.create({
         data: {
           userId: d.funderId,
           type: "LOAN_RETURN",
-          amount: d.amount,
-          balanceAfter: funderAccount.principalBalance.plus(d.amount).plus(funderAccount.interestBalance),
+          amount: credit,
+          balanceAfter: funderAccount.principalBalance.plus(credit).plus(funderAccount.interestBalance),
           referenceId: repayment.loanId,
-          note: `Return from loan ${repayment.loanId}`,
+          note: `Return from loan ${repayment.loanId} (platform fee on interest ${fee.toFixed(2)})`,
         },
       });
     }

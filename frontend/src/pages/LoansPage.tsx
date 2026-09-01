@@ -9,6 +9,10 @@ import { fmt, pct, errorMessage, formatDuration } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 import { NewLoanModal } from "../components/NewLoanModal";
 
+import { useAuth } from "../context/AuthContext";
+// ...
+
+
 type SubTab = "marketplace" | "funded" | "mine" | "guarantees";
 
 function statusMeta(status: Loan["status"] | string) {
@@ -48,6 +52,7 @@ function packageLine(l: Loan) {
 
 export function LoansPage() {
   const showToast = useToast();
+  const { user } = useAuth();
   const [sub, setSub] = useState<SubTab>("marketplace");
   const [marketLoans, setMarketLoans] = useState<Loan[]>([]);
   const [myLoans, setMyLoans] = useState<Loan[]>([]);
@@ -399,6 +404,24 @@ export function LoansPage() {
           >
             💰 Request a loan
           </button>
+          {user && (
+            <button
+              className="btn btn-outline"
+              style={{ width: "100%", marginTop: 8, padding: "10px 0", fontSize: 12.5 }}
+              onClick={async () => {
+                const url = `${window.location.origin}/register?ref=${encodeURIComponent(user.username)}`;
+                const text = `Join Zawadi and invest so you can guarantee my loan: ${url}`;
+                try {
+                  await navigator.clipboard.writeText(text);
+                  showToast("Invite link copied");
+                } catch {
+                  showToast(url);
+                }
+              }}
+            >
+              Copy invite link
+            </button>
+          )}
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
             {myLoans.length === 0 ? (
               <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>

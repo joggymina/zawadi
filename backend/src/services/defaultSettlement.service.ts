@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { Decimal } from "@prisma/client/runtime/library";
 import { writeAudit } from "./audit.service";
+import { getAdminSettings } from "./adminSettings.service";
 
 const DAY_MS = 86_400_000;
 
@@ -199,29 +200,40 @@ export async function settleDefaultedLoan(params: {
     }
 
     if (collected.greaterThan(0) && loan.fundings.length > 0) {
+      const settings = await getAdminSettings();
+      const sharePct = Number(settings.platformInterestSharePct ?? 10) / 100;
+
+      const interestCollected = Decimal.min(collected, interestOwed);
+      const principalCollected = collected.minus(interestCollected);
+
       const totalFunded = loan.fundings.reduce((s, f) => s.plus(f.amount), new Decimal(0));
       const denom = totalFunded.greaterThan(0) ? totalFunded : loan.amount;
 
       for (const f of loan.fundings) {
-        const portion = collected.mul(f.amount).div(denom).toDecimalPlaces(2);
-        if (portion.lessThanOrEqualTo(0)) continue;
+        const weight = f.amount.div(denom);
+        const dPrincipal = principalCollected.mul(weight).toDecimalPlaces(2);
+        const dInterest = interestCollected.mul(weight).toDecimalPlaces(2);
+        const fee = dInterest.mul(sharePct).toDecimalPlaces(2);
+        const credit = dPrincipal.plus(dInterest).minus(fee);
+        if (credit.lessThanOrEqualTo(0)) continue;
+
         const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
           where: { userId: f.funderId },
         });
         await tx.investmentAccount.update({
           where: { userId: f.funderId },
-          data: { principalBalance: { increment: portion } },
+          data: { principalBalance: { increment: credit } },
         });
         await tx.transaction.create({
           data: {
             userId: f.funderId,
             type: "LOAN_RETURN",
-            amount: portion,
+            amount: credit,
             balanceAfter: funderAccount.principalBalance
-              .plus(portion)
+              .plus(credit)
               .plus(funderAccount.interestBalance),
             referenceId: loan.id,
-            note: `Default settlement return from loan ${loan.id}`,
+            note: `Default settlement return (platform fee on interest ${fee.toFixed(2)})`,
           },
         });
       }
