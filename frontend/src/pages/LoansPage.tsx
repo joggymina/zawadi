@@ -3,18 +3,38 @@ import * as loansApi from "../api/loans";
 import * as accountApi from "../api/account";
 import * as publicApi from "../api/public";
 import type { Loan, AccountSummary, AdminSettings, MyFunding } from "../api/types";
+import type { PendingGuarantee } from "../api/loans";
 import { AmountModal } from "../components/AmountModal";
-import { fmt, pct, errorMessage, formatDuration, shortDate } from "../utils/format";
+import { fmt, pct, errorMessage, formatDuration } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 import { NewLoanModal } from "../components/NewLoanModal";
 
-type SubTab = "marketplace" | "funded" | "mine";
+type SubTab = "marketplace" | "funded" | "mine" | "guarantees";
 
-function statusMeta(status: Loan["status"]) {
-  if (status === "OPEN") return { label: "Open for funding", bg: "var(--amber-pale)", fg: "#7a5a2e" };
-  if (status === "REPAYING") return { label: "Repaying", bg: "#e6f0fb", fg: "#0c447c" };
-  if (status === "REPAID") return { label: "Fully repaid", bg: "var(--green-pale)", fg: "var(--green-deep)" };
-  return { label: status, bg: "var(--line)", fg: "var(--ink-soft)" };
+function statusMeta(status: Loan["status"] | string) {
+  if (status === "PENDING_GUARANTORS") {
+    return { label: "Waiting on guarantors", bg: "var(--amber-pale)", fg: "#7a5a2e" };
+  }
+  if (status === "OPEN") {
+    return { label: "Open for funding", bg: "var(--amber-pale)", fg: "#7a5a2e" };
+  }
+  if (status === "REPAYING") {
+    return { label: "Repaying", bg: "#e6f0fb", fg: "#0c447c" };
+  }
+  if (status === "REPAID") {
+    return { label: "Fully repaid", bg: "var(--green-pale)", fg: "var(--green-deep)" };
+  }
+  if (status === "CANCELLED") {
+    return { label: "Cancelled", bg: "var(--line)", fg: "var(--ink-soft)" };
+  }
+  return { label: String(status), bg: "var(--line)", fg: "var(--ink-soft)" };
+}
+
+function guarantorStatusLabel(status?: string) {
+  if (status === "ACCEPTED") return "accepted";
+  if (status === "DECLINED") return "declined";
+  if (status === "PENDING") return "pending";
+  return status ?? "";
 }
 
 function packageLine(l: Loan) {
@@ -29,25 +49,29 @@ export function LoansPage() {
   const [marketLoans, setMarketLoans] = useState<Loan[]>([]);
   const [myLoans, setMyLoans] = useState<Loan[]>([]);
   const [myFundings, setMyFundings] = useState<MyFunding[]>([]);
+  const [pendingGuarantees, setPendingGuarantees] = useState<PendingGuarantee[]>([]);
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [error, setError] = useState("");
   const [fundModal, setFundModal] = useState<Loan | null>(null);
   const [repayModal, setRepayModal] = useState<Loan | null>(null);
   const [newLoanOpen, setNewLoanOpen] = useState(false);
+  const [respondBusy, setRespondBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [market, mine, funded, acc, s] = await Promise.all([
+      const [market, mine, funded, guarantees, acc, s] = await Promise.all([
         loansApi.marketplace(),
         loansApi.mine(),
         loansApi.funded(),
+        loansApi.listPendingGuarantees(),
         accountApi.getMe(),
         publicApi.getPublicSettings(),
       ]);
       setMarketLoans(market);
       setMyLoans(mine);
       setMyFundings(funded);
+      setPendingGuarantees(guarantees);
       setAccount(acc);
       setSettings(s);
     } catch (err) {
@@ -59,7 +83,9 @@ export function LoansPage() {
     load();
   }, [load]);
 
-  if (error) return <div style={{ padding: 20, color: "var(--rust)", fontSize: 13.5 }}>{error}</div>;
+  if (error) {
+    return <div style={{ padding: 20, color: "var(--rust)", fontSize: 13.5 }}>{error}</div>;
+  }
   if (!account || !settings) {
     return <div style={{ padding: 20, color: "var(--ink-soft)" }}>Loading…</div>;
   }
@@ -73,7 +99,7 @@ export function LoansPage() {
         background: sub === id ? "var(--green)" : "transparent",
         color: sub === id ? "#f4fbf4" : "var(--ink)",
         border: `1px solid ${sub === id ? "var(--green)" : "var(--line)"}`,
-        fontSize: 12.5,
+        fontSize: 12,
         padding: "8px 4px",
       }}
     >
@@ -81,12 +107,49 @@ export function LoansPage() {
     </button>
   );
 
+  async function respond(loanId: string, accept: boolean) {
+    const verb = accept ? "Accept" : "Decline";
+    if (
+      !window.confirm(
+        accept
+          ? "Accept as guarantor? Your pledged investment will be held until this loan is repaid or cancelled. If the borrower defaults, up to that held amount may be used to cover funders."
+          : "Decline this guarantee request? The loan will be cancelled for the borrower.",
+      )
+    ) {
+      return;
+    }
+    setRespondBusy(loanId);
+    try {
+      const result = await loansApi.respondGuarantor(loanId, accept);
+      await load();
+      if (accept) {
+        showToast(
+          result.status === "OPEN"
+            ? "You accepted — loan is now open for funding"
+            : "You accepted — waiting on other guarantors",
+        );
+      } else {
+        showToast("You declined — loan cancelled");
+      }
+    } catch (err) {
+      showToast(errorMessage(err));
+    } finally {
+      setRespondBusy(null);
+    }
+  }
+
   return (
     <div>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {tabBtn("marketplace", "Fund a loan")}
         {tabBtn("funded", "My funding")}
         {tabBtn("mine", "My requests")}
+        {tabBtn(
+          "guarantees",
+          pendingGuarantees.length > 0
+            ? `To guarantee (${pendingGuarantees.length})`
+            : "To guarantee",
+        )}
       </div>
 
       {sub === "marketplace" && (
@@ -255,6 +318,75 @@ export function LoansPage() {
         </div>
       )}
 
+      {sub === "guarantees" && (
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          {pendingGuarantees.length === 0 ? (
+            <div className="card" style={{ padding: "18px 16px", fontSize: 13, color: "var(--ink-soft)" }}>
+              No guarantee requests waiting for you.
+            </div>
+          ) : (
+            pendingGuarantees.map((row) => {
+              const l = row.loan;
+              return (
+                <div key={row.id} className="card" style={{ padding: "14px 16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 14, fontWeight: 500 }}>
+                      @{l.borrower?.username} requests your guarantee
+                    </span>
+                    <span className="mono" style={{ fontSize: 14 }}>
+                      {fmt(l.amount)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                    {l.purpose || "General purpose loan"}
+                    {l.package ? ` · ${l.package.name}` : ""} · {pct(l.interestRateApr)} p.a.
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 10,
+                      background: "var(--amber-pale)",
+                      borderRadius: 10,
+                      padding: "10px 12px",
+                      fontSize: 12.5,
+                      color: "#7a5a2e",
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    <strong>Your hold if you accept:</strong> {fmt(row.balanceAtPledge)} of your
+                    investment principal will stay locked until this loan is repaid or cancelled. If
+                    the borrower defaults, up to that amount may be used to cover funders.
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                    <button
+                      className="btn btn-primary"
+                      style={{ flex: 1, padding: "10px 0", fontSize: 13 }}
+                      disabled={respondBusy === l.id}
+                      onClick={() => respond(l.id, true)}
+                    >
+                      {respondBusy === l.id ? "…" : "Accept"}
+                    </button>
+                    <button
+                      className="btn btn-outline"
+                      style={{
+                        flex: 1,
+                        padding: "10px 0",
+                        fontSize: 13,
+                        color: "var(--rust)",
+                        borderColor: "var(--rust)",
+                      }}
+                      disabled={respondBusy === l.id}
+                      onClick={() => respond(l.id, false)}
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
       {sub === "mine" && (
         <div style={{ marginTop: 16 }}>
           <button
@@ -294,14 +426,25 @@ export function LoansPage() {
                     )}
                     <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 6 }}>
                       Guarantors:{" "}
-                      {l.guarantors.map((g) => "@" + (g.user?.username ?? g.userId)).join(", ")}
+                      {l.guarantors
+                        .map((g) => {
+                          const name = "@" + (g.user?.username ?? g.userId);
+                          const st = guarantorStatusLabel(g.status);
+                          return st ? `${name} (${st})` : name;
+                        })
+                        .join(", ")}
                     </div>
+                    {l.status === "PENDING_GUARANTORS" && (
+                      <div style={{ fontSize: 12, color: "#7a5a2e", marginTop: 8 }}>
+                        Waiting for all guarantors to accept before this loan can be funded.
+                      </div>
+                    )}
                     {(l.fundings?.length ?? 0) > 0 && (
                       <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
                         Funded by{" "}
-                        {l.fundings!.map(
-                          (f) => `@${f.funder?.username ?? "?"} ${fmt(f.amount)}`,
-                        ).join(" · ")}
+                        {l.fundings!.map((f) => `@${f.funder?.username ?? "?"} ${fmt(f.amount)}`).join(
+                          " · ",
+                        )}
                       </div>
                     )}
                     {(l.status === "REPAYING" || l.status === "REPAID") && (
@@ -384,7 +527,10 @@ export function LoansPage() {
       {fundModal && (
         <AmountModal
           title="Fund this loan"
-          balanceLabel={`Your available balance: ${fmt(account.principalBalance)}`}
+          balanceLabel={`Your available balance: ${fmt(
+            (account as { availablePrincipal?: string }).availablePrincipal ??
+              account.principalBalance,
+          )}`}
           confirmLabel="Fund"
           needsConfirm
           confirmHint={`Funding @${fundModal.borrower?.username ?? "borrower"}'s loan.`}
@@ -397,10 +543,13 @@ export function LoansPage() {
           }}
         />
       )}
+
       {repayModal && (
         <AmountModal
           title="Repay loan"
-          balanceLabel={`Outstanding: ${fmt(Number(repayModal.principalOwed) + Number(repayModal.interestOwed))} (principal ${fmt(repayModal.principalOwed)} + interest ${fmt(repayModal.interestOwed)})`}
+          balanceLabel={`Outstanding: ${fmt(
+            Number(repayModal.principalOwed) + Number(repayModal.interestOwed),
+          )} (principal ${fmt(repayModal.principalOwed)} + interest ${fmt(repayModal.interestOwed)})`}
           confirmLabel="Repay"
           needsConfirm
           confirmHint="Repayment is held awaiting approval."
@@ -413,6 +562,7 @@ export function LoansPage() {
           }}
         />
       )}
+
       {newLoanOpen && (
         <NewLoanModal
           settings={settings}
@@ -420,8 +570,9 @@ export function LoansPage() {
           onSubmit={async (params) => {
             await loansApi.createLoan(params);
             await load();
-            showToast("Loan request published");
+            showToast("Loan request sent — waiting on guarantors");
             setNewLoanOpen(false);
+            setSub("mine");
           }}
         />
       )}

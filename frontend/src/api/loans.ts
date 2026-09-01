@@ -1,5 +1,12 @@
 import { request } from "./client";
-import type { Loan, LoanRepayment, MyFunding } from "./types";
+import type { Loan, LoanRepayment } from "./types";
+
+export type PendingGuarantee = {
+  id: string;
+  balanceAtPledge: string;
+  status: string;
+  loan: Loan;
+};
 
 export function createLoan(params: {
   amount: number;
@@ -19,7 +26,20 @@ export function mine() {
 }
 
 export function funded() {
-  return request<MyFunding[]>("/api/loans/funded");
+  return request<
+    { fundingId: string; myAmount: string; fundedAt: string; loan: Loan }[]
+  >("/api/loans/funded");
+}
+
+export function listPendingGuarantees() {
+  return request<PendingGuarantee[]>("/api/loans/guarantees/pending");
+}
+
+export function respondGuarantor(loanId: string, accept: boolean) {
+  return request<{ loanId: string; status: string }>(
+    `/api/loans/${loanId}/guarantor-response`,
+    { method: "POST", body: { accept } },
+  );
 }
 
 export function fund(loanId: string, amount: number) {
@@ -27,5 +47,8 @@ export function fund(loanId: string, amount: number) {
 }
 
 export function repay(loanId: string, amount: number) {
-  return request<LoanRepayment>(`/api/loans/${loanId}/repay`, { method: "POST", body: { amount } });
+  return request<LoanRepayment>(`/api/loans/${loanId}/repay`, {
+    method: "POST",
+    body: { amount },
+  });
 }

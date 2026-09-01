@@ -55,8 +55,11 @@ export interface LoanGuarantor {
   id: string;
   userId: string;
   balanceAtPledge: string;
+  status?: string; // PENDING | ACCEPTED | DECLINED
   user?: { username: string };
 }
+
+
 
 export interface LoanFunding {
   id: string;
@@ -85,9 +88,11 @@ export interface LoanRepayment {
 export interface Loan {
   id: string;
   amount: string;
+
+  status: string;
+
   purpose: string | null;
   interestRateApr: string;
-  status: LoanStatus;
   principalOwed: string;
   interestOwed: string;
   fundedAmount: string;

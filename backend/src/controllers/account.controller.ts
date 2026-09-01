@@ -5,6 +5,8 @@ import { Decimal } from "@prisma/client/runtime/library";
 import { z } from "zod";
 import { writeAudit } from "../services/audit.service";
 import { assertInvestAllowed, assertWithdrawAllowed } from "../services/kycLimits.service";
+
+import { assertCanDebitPrincipal, getAvailablePrincipal } from "../services/guarantorHold.service";
 import { getAdminSettings } from "../services/adminSettings.service";
 
 export const amountSchema = z.object({
@@ -12,12 +14,13 @@ export const amountSchema = z.object({
 });
 
 export async function getMe(req: Request, res: Response) {
-  const account = await prisma.investmentAccount.findUnique({ where: { userId: req.user!.id } });
-  if (!account) throw new AppError("Account not found.", 404);
+  const bal = await getAvailablePrincipal(req.user!.id);
   return res.json({
-    principalBalance: account.principalBalance,
-    interestBalance: account.interestBalance,
-    totalBalance: account.principalBalance.plus(account.interestBalance),
+    principalBalance: bal.principal,
+    interestBalance: bal.interest,
+    totalBalance: bal.principal.plus(bal.interest),
+    heldAsGuarantor: bal.held,
+    availablePrincipal: bal.available,
   });
 }
 
@@ -70,10 +73,15 @@ export async function withdraw(req: Request, res: Response) {
 
   await assertWithdrawAllowed(req.user!.id, amount);
 
+// inside withdraw, before debiting:
   const settings = await getAdminSettings();
-  const feePct = new Decimal(settings.withdrawFeePct);
-  const fee = amt.mul(feePct).div(100).toDecimalPlaces(2);
-  const net = amt.minus(fee);
+  const feePct = Number(settings.withdrawFeePct ?? 2.5);
+  const gross = amt;
+  const fee = new Decimal((Number(gross) * feePct) / 100).toDecimalPlaces(2);
+  const totalDebit = gross; // or gross+fee depending on your fee model — keep your existing fee logic
+
+  await assertCanDebitPrincipal(req.user!.id, gross);
+
 
   const account = await prisma.investmentAccount.findUnique({ where: { userId: req.user!.id } });
   if (!account) throw new AppError("Account not found.", 404);

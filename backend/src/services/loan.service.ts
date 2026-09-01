@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { getAdminSettings } from "./adminSettings.service";
+import { assertCanDebitPrincipal } from "./guarantorHold.service";
 import { Decimal } from "@prisma/client/runtime/library";
 
 const DAY_MS = 86_400_000;
@@ -9,7 +10,6 @@ function elapsedDays(from: Date, to: Date): number {
   return Math.max(0, (to.getTime() - from.getTime()) / DAY_MS);
 }
 
-/** Simple interest for `days` (can be fractional). */
 function simpleInterest(principal: Decimal, aprPct: Decimal | number, days: number): Decimal {
   if (days <= 0) return new Decimal(0);
   const p = Number(principal);
@@ -18,32 +18,22 @@ function simpleInterest(principal: Decimal, aprPct: Decimal | number, days: numb
   return new Decimal((p * r * (days / 365)).toFixed(2));
 }
 
-/**
- * Package whose term best matches how long the loan has been outstanding:
- * shortest durationHours >= elapsedHours; else the longest package.
- */
 async function matchingPackageRate(elapsedHours: number): Promise<Decimal | null> {
-  const packages = await prisma.loanPackage.findMany({
-    orderBy: { durationHours: "asc" },
-  });
+  const packages = await prisma.loanPackage.findMany({ orderBy: { durationHours: "asc" } });
   if (packages.length === 0) return null;
   const match =
     packages.find((p) => p.durationHours >= elapsedHours) ?? packages[packages.length - 1];
   return match.interestRateApr;
 }
 
-/**
- * Cap interest at the matching shorter-package rate for actual hold time (policy C).
- * Accrual still uses the loan's original package APR day to day.
- */
 async function applyEarlyRepayInterestCap(params: {
   principal: Decimal;
   interestOwed: Decimal;
   disbursedAt: Date | null;
   now: Date;
-}): Promise<{ interestOwed: Decimal; capped: boolean; matchApr: number | null }> {
+}) {
   if (!params.disbursedAt) {
-    return { interestOwed: params.interestOwed, capped: false, matchApr: null };
+    return { interestOwed: params.interestOwed, capped: false, matchApr: null as number | null };
   }
   const hours = (params.now.getTime() - params.disbursedAt.getTime()) / (60 * 60 * 1000);
   const days = elapsedDays(params.disbursedAt, params.now);
@@ -81,9 +71,7 @@ export async function createLoanRequest(params: {
   });
   if (!pkg) throw new AppError("Selected loan package is not available.", 422);
 
-  if (params.guarantorUsernames.includes("")) {
-    throw new AppError("Invalid guarantor list.");
-  }
+  if (params.guarantorUsernames.includes("")) throw new AppError("Invalid guarantor list.");
   if (new Set(params.guarantorUsernames).size !== params.guarantorUsernames.length) {
     throw new AppError("Guarantors must be distinct users.");
   }
@@ -120,21 +108,115 @@ export async function createLoanRequest(params: {
       amount,
       purpose: params.purpose,
       interestRateApr: pkg.interestRateApr,
-      status: "OPEN",
+      status: "PENDING_GUARANTORS",
       packageId: pkg.id,
       guarantors: {
         create: guarantors.map((g) => ({
           userId: g.id,
           balanceAtPledge: g.account?.principalBalance ?? new Decimal(0),
+          status: "PENDING",
         })),
       },
     },
-    include: { guarantors: true, package: true },
+    include: {
+      guarantors: { include: { user: { select: { username: true } } } },
+      package: true,
+    },
+  });
+}
+
+export async function respondAsGuarantor(params: {
+  loanId: string;
+  guarantorId: string;
+  accept: boolean;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const loan = await tx.loan.findUnique({
+      where: { id: params.loanId },
+      include: { guarantors: true },
+    });
+    if (!loan) throw new AppError("Loan not found.", 404);
+    if (loan.status !== "PENDING_GUARANTORS") {
+      throw new AppError("This loan is no longer waiting for guarantors.", 422);
+    }
+
+    const row = loan.guarantors.find((g) => g.userId === params.guarantorId);
+    if (!row) throw new AppError("You are not a guarantor on this loan.", 403);
+    if (row.status !== "PENDING") {
+      throw new AppError("You already responded to this request.", 422);
+    }
+
+    if (!params.accept) {
+      await tx.loanGuarantor.update({
+        where: { id: row.id },
+        data: { status: "DECLINED", respondedAt: new Date() },
+      });
+      await tx.loan.update({
+        where: { id: loan.id },
+        data: { status: "CANCELLED" },
+      });
+      return { loanId: loan.id, status: "CANCELLED" as const };
+    }
+
+    const account = await tx.investmentAccount.findUnique({
+      where: { userId: params.guarantorId },
+    });
+    if (!account) throw new AppError("Account not found.", 404);
+
+    const otherHolds = await tx.loanGuarantor.findMany({
+      where: {
+        userId: params.guarantorId,
+        status: "ACCEPTED",
+        loan: { status: { in: ["PENDING_GUARANTORS", "OPEN", "REPAYING"] } },
+      },
+    });
+    const held = otherHolds.reduce((s, r) => s.plus(r.balanceAtPledge), new Decimal(0));
+    const available = account.principalBalance.minus(held);
+    if (available.lessThan(row.balanceAtPledge)) {
+      throw new AppError(
+        `You need ${row.balanceAtPledge.toFixed(2)} free principal to guarantee this loan (after other holds).`,
+        422,
+      );
+    }
+
+    await tx.loanGuarantor.update({
+      where: { id: row.id },
+      data: { status: "ACCEPTED", respondedAt: new Date() },
+    });
+
+    const updated = await tx.loanGuarantor.findMany({ where: { loanId: loan.id } });
+    const allAccepted = updated.every((g) => g.status === "ACCEPTED");
+    if (allAccepted) {
+      await tx.loan.update({ where: { id: loan.id }, data: { status: "OPEN" } });
+      return { loanId: loan.id, status: "OPEN" as const };
+    }
+    return { loanId: loan.id, status: "PENDING_GUARANTORS" as const };
+  });
+}
+
+export async function listPendingGuarantees(guarantorId: string) {
+  return prisma.loanGuarantor.findMany({
+    where: {
+      userId: guarantorId,
+      status: "PENDING",
+      loan: { status: "PENDING_GUARANTORS" },
+    },
+    include: {
+      loan: {
+        include: {
+          package: true,
+          borrower: { select: { username: true } },
+          guarantors: { include: { user: { select: { username: true } } } },
+        },
+      },
+    },
+    orderBy: { loan: { createdAt: "desc" } },
   });
 }
 
 export async function fundLoan(params: { loanId: string; funderId: string; amount: number }) {
   const amount = new Decimal(params.amount);
+  await assertCanDebitPrincipal(params.funderId, amount);
 
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT id FROM "Loan" WHERE id = ${params.loanId} FOR UPDATE`;
@@ -241,19 +323,18 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     if (loan.borrowerId !== params.borrowerId) throw new AppError("This isn't your loan.", 403);
     if (loan.status !== "REPAYING") throw new AppError("This loan isn't awaiting repayment.", 422);
 
-    // Catch up interest to now (fractional days) using original package APR on the loan.
     let interestOwed = loan.interestOwed;
     let lastAccrualAt = loan.lastAccrualAt;
     if (lastAccrualAt && loan.principalOwed.greaterThan(0)) {
       const days = elapsedDays(lastAccrualAt, now);
       if (days > 0) {
-        const gained = simpleInterest(loan.principalOwed, loan.interestRateApr, days);
-        interestOwed = interestOwed.plus(gained);
+        interestOwed = interestOwed.plus(
+          simpleInterest(loan.principalOwed, loan.interestRateApr, days),
+        );
         lastAccrualAt = now;
       }
     }
 
-    // Policy C: cap at matching-duration package rate for time actually held.
     const cap = await applyEarlyRepayInterestCap({
       principal: loan.amount,
       interestOwed,
@@ -278,7 +359,6 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     const interestPaid = Decimal.min(remaining, interestOwed);
     remaining = remaining.minus(interestPaid);
     const principalPaid = Decimal.min(remaining, loan.principalOwed);
-
     const newInterestOwed = interestOwed.minus(interestPaid);
     const newPrincipalOwed = loan.principalOwed.minus(principalPaid);
     const fullyRepaid =
@@ -352,7 +432,6 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
     if (repayment.status !== "PENDING") {
       throw new AppError("This repayment has already been reviewed.", 422);
     }
-
     for (const d of repayment.distributions) {
       const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
         where: { userId: d.funderId },
@@ -372,14 +451,9 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
         },
       });
     }
-
     return tx.loanRepayment.update({
       where: { id: repayment.id },
-      data: {
-        status: "APPROVED",
-        reviewedAt: new Date(),
-        reviewedById: params.adminId,
-      },
+      data: { status: "APPROVED", reviewedAt: new Date(), reviewedById: params.adminId },
     });
   });
 }
@@ -394,7 +468,6 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
     if (repayment.status !== "PENDING") {
       throw new AppError("This repayment has already been reviewed.", 422);
     }
-
     await tx.loan.update({
       where: { id: repayment.loanId },
       data: {
@@ -403,7 +476,6 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
         status: "REPAYING",
       },
     });
-
     const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({
       where: { userId: repayment.loan.borrowerId },
     });
@@ -423,14 +495,9 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
         note: "Repayment rejected — refunded",
       },
     });
-
     return tx.loanRepayment.update({
       where: { id: repayment.id },
-      data: {
-        status: "REJECTED",
-        reviewedAt: new Date(),
-        reviewedById: params.adminId,
-      },
+      data: { status: "REJECTED", reviewedAt: new Date(), reviewedById: params.adminId },
     });
   });
 }
