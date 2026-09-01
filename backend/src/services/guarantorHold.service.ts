@@ -1,15 +1,20 @@
+import { LoanStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { Decimal } from "@prisma/client/runtime/library";
 import { AppError } from "../middleware/errorHandler";
 
-const ACTIVE_HOLD_STATUSES = ["PENDING_GUARANTORS", "OPEN", "REPAYING"];
+const ACTIVE_HOLD: LoanStatus[] = [
+  LoanStatus.PENDING_GUARANTORS,
+  LoanStatus.OPEN,
+  LoanStatus.REPAYING,
+];
 
 export async function getGuarantorHeldAmount(userId: string): Promise<Decimal> {
   const rows = await prisma.loanGuarantor.findMany({
     where: {
       userId,
       status: "ACCEPTED",
-      loan: { status: { in: ACTIVE_HOLD_STATUSES } },
+      loan: { status: { in: ACTIVE_HOLD } },
     },
   });
   return rows.reduce((s, r) => s.plus(r.balanceAtPledge), new Decimal(0));

@@ -9,6 +9,10 @@ export interface AccountSummary {
   principalBalance: string;
   interestBalance: string;
   totalBalance: string;
+  /** Principal locked because user accepted as guarantor on active loans */
+  heldAsGuarantor?: string;
+  /** principalBalance − heldAsGuarantor (what can be withdrawn / used to fund) */
+  availablePrincipal?: string;
 }
 
 export type TxType =
@@ -55,11 +59,10 @@ export interface LoanGuarantor {
   id: string;
   userId: string;
   balanceAtPledge: string;
-  status?: string; // PENDING | ACCEPTED | DECLINED
+  status?: "PENDING" | "ACCEPTED" | "DECLINED" | string;
+  respondedAt?: string | null;
   user?: { username: string };
 }
-
-
 
 export interface LoanFunding {
   id: string;
@@ -88,9 +91,7 @@ export interface LoanRepayment {
 export interface Loan {
   id: string;
   amount: string;
-
-  status: string;
-
+  status: LoanStatus | string;
   purpose: string | null;
   interestRateApr: string;
   principalOwed: string;

@@ -5,7 +5,6 @@ import { Decimal } from "@prisma/client/runtime/library";
 import { z } from "zod";
 import { writeAudit } from "../services/audit.service";
 import { assertInvestAllowed, assertWithdrawAllowed } from "../services/kycLimits.service";
-
 import { assertCanDebitPrincipal, getAvailablePrincipal } from "../services/guarantorHold.service";
 import { getAdminSettings } from "../services/adminSettings.service";
 
@@ -37,7 +36,6 @@ export async function getTransactions(req: Request, res: Response) {
 export async function invest(req: Request, res: Response) {
   const { amount } = req.body as z.infer<typeof amountSchema>;
   const amt = new Decimal(amount);
-
   await assertInvestAllowed(req.user!.id, amount);
 
   const result = await prisma.$transaction(async (tx) => {
@@ -69,39 +67,42 @@ export async function invest(req: Request, res: Response) {
 
 export async function withdraw(req: Request, res: Response) {
   const { amount } = req.body as z.infer<typeof amountSchema>;
-  const amt = new Decimal(amount);
+  const gross = new Decimal(amount);
 
   await assertWithdrawAllowed(req.user!.id, amount);
 
-// inside withdraw, before debiting:
   const settings = await getAdminSettings();
   const feePct = Number(settings.withdrawFeePct ?? 2.5);
-  const gross = amt;
-  const fee = new Decimal((Number(gross) * feePct) / 100).toDecimalPlaces(2);
-  const totalDebit = gross; // or gross+fee depending on your fee model — keep your existing fee logic
+  const fee = new Decimal(((Number(gross) * feePct) / 100).toFixed(2));
+  const net = gross.minus(fee);
 
+  if (net.lessThanOrEqualTo(0)) {
+    throw new AppError("Amount too small after withdrawal fee.", 422);
+  }
+
+  // Hold-aware: cannot withdraw principal locked as guarantor
   await assertCanDebitPrincipal(req.user!.id, gross);
 
-
-  const account = await prisma.investmentAccount.findUnique({ where: { userId: req.user!.id } });
+  const account = await prisma.investmentAccount.findUnique({
+    where: { userId: req.user!.id },
+  });
   if (!account) throw new AppError("Account not found.", 404);
-  if (amt.greaterThan(account.principalBalance)) {
+  if (gross.greaterThan(account.principalBalance)) {
     throw new AppError("That's more than your investment principal.", 422);
   }
 
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.investmentAccount.update({
       where: { userId: req.user!.id },
-      data: { principalBalance: { decrement: amt } },
+      data: { principalBalance: { decrement: gross } },
     });
-    const balanceAfter = updated.principalBalance.plus(updated.interestBalance);
     await tx.transaction.create({
       data: {
         userId: req.user!.id,
         type: "WITHDRAWAL",
-        amount: amt,
-        balanceAfter,
-        note: `Withdrawal gross ${amt.toFixed(2)}; platform fee ${fee.toFixed(2)} (${feePct.toFixed(2)}%); net ${net.toFixed(2)}`,
+        amount: gross,
+        balanceAfter: updated.principalBalance.plus(updated.interestBalance),
+        note: `Withdrawal gross ${gross.toFixed(2)}; platform fee ${fee.toFixed(2)} (${feePct.toFixed(2)}%); net ${net.toFixed(2)}`,
       },
     });
     return updated;
@@ -111,17 +112,17 @@ export async function withdraw(req: Request, res: Response) {
     userId: req.user!.id,
     action: "WITHDRAW",
     metadata: {
-      amount: Number(amt),
+      amount: Number(gross),
       fee: Number(fee),
       net: Number(net),
-      feePct: Number(feePct),
+      feePct,
     },
     ip: req.ip,
   });
 
   return res.json({
     principalBalance: result.principalBalance,
-    amount: amt,
+    amount: gross,
     fee,
     net,
     feePct,

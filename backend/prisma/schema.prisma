@@ -198,12 +198,13 @@ model Loan {
 model LoanGuarantor {
   id              String    @id @default(uuid())
   loanId          String
+  loan            Loan      @relation(fields: [loanId], references: [id])
   userId          String
+  user            User      @relation(fields: [userId], references: [id])
   balanceAtPledge Decimal   @db.Decimal(18, 2)
   status          String    @default("PENDING") // PENDING | ACCEPTED | DECLINED
   respondedAt     DateTime?
-  loan            Loan      @relation(fields: [loanId], references: [id])
-  user            User      @relation(fields: [userId], references: [id])
+  pledgedAt       DateTime  @default(now())
 
   @@unique([loanId, userId])
 }
