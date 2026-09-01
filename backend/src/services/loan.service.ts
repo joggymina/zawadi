@@ -90,6 +90,7 @@ export async function createLoanRequest(params: {
     throw new AppError("You can't guarantee your own loan.");
   }
 
+  // Required coverage = loan × (1 + buffer%)
   const threshold = amount.mul(1 + Number(settings.guarantorCoverageExtraPct) / 100);
   const combined = guarantors.reduce(
     (sum, g) => sum.plus(g.account?.principalBalance ?? 0),
@@ -100,6 +101,19 @@ export async function createLoanRequest(params: {
       `Combined guarantor balance (${combined.toFixed(2)}) is below the required ${threshold.toFixed(2)} (${100 + Number(settings.guarantorCoverageExtraPct)}% of the loan).`,
       422,
     );
+  }
+
+  // Equal share of coverage — this is the locked amount, not full principal
+  const holdEach = threshold.div(guarantors.length).toDecimalPlaces(2);
+
+  for (const g of guarantors) {
+    const bal = g.account?.principalBalance ?? new Decimal(0);
+    if (bal.lessThan(holdEach)) {
+      throw new AppError(
+        `@${g.username} does not have enough principal to cover their share (${holdEach.toFixed(2)}).`,
+        422,
+      );
+    }
   }
 
   return prisma.loan.create({
@@ -113,7 +127,7 @@ export async function createLoanRequest(params: {
       guarantors: {
         create: guarantors.map((g) => ({
           userId: g.id,
-          balanceAtPledge: g.account?.principalBalance ?? new Decimal(0),
+          balanceAtPledge: holdEach,
           status: "PENDING",
         })),
       },
@@ -432,6 +446,7 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
     if (repayment.status !== "PENDING") {
       throw new AppError("This repayment has already been reviewed.", 422);
     }
+
     for (const d of repayment.distributions) {
       const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
         where: { userId: d.funderId },
@@ -451,6 +466,7 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
         },
       });
     }
+
     return tx.loanRepayment.update({
       where: { id: repayment.id },
       data: { status: "APPROVED", reviewedAt: new Date(), reviewedById: params.adminId },
@@ -468,6 +484,7 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
     if (repayment.status !== "PENDING") {
       throw new AppError("This repayment has already been reviewed.", 422);
     }
+
     await tx.loan.update({
       where: { id: repayment.loanId },
       data: {
@@ -476,6 +493,7 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
         status: "REPAYING",
       },
     });
+
     const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({
       where: { userId: repayment.loan.borrowerId },
     });
@@ -495,6 +513,7 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
         note: "Repayment rejected — refunded",
       },
     });
+
     return tx.loanRepayment.update({
       where: { id: repayment.id },
       data: { status: "REJECTED", reviewedAt: new Date(), reviewedById: params.adminId },
