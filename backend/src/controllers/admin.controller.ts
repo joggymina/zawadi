@@ -6,6 +6,41 @@ import { getAdminSettings, updateAdminSettings } from "../services/adminSettings
 import * as loanService from "../services/loan.service";
 import { writeAudit } from "../services/audit.service";
 
+import * as defaultSettlement from "../services/defaultSettlement.service";
+
+export async function listDefaultCandidates(_req: Request, res: Response) {
+  const list = await defaultSettlement.findDefaultCandidates();
+  return res.json(
+    list.map((l) => ({
+      id: l.id,
+      amount: l.amount,
+      dueAt: l.dueAt,
+      principalOwed: l.principalOwed,
+      interestOwed: l.interestOwed,
+      borrower: l.borrower,
+      package: l.package,
+    })),
+  );
+}
+
+export async function settleDefault(req: Request, res: Response) {
+  const result = await defaultSettlement.settleDefaultedLoan({
+    loanId: req.params.id,
+    triggeredById: req.user!.id,
+  });
+  return res.json(result);
+}
+
+export async function runAllDefaultSettlements(req: Request, res: Response) {
+  const results = await defaultSettlement.runDefaultSettlements();
+  await writeAudit({
+    userId: req.user!.id,
+    action: "LOAN_DEFAULT_SETTLE_BATCH",
+    metadata: { count: results.length },
+    ip: req.ip,
+  });
+  return res.json({ results });
+}
 export const updateSettingsSchema = z.object({
   investAnnualRatePct: z.number().min(0).max(100).optional(),
   loanAnnualRatePct: z.number().min(0).max(100).optional(),

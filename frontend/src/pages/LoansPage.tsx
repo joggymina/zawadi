@@ -27,6 +27,9 @@ function statusMeta(status: Loan["status"] | string) {
   if (status === "CANCELLED") {
     return { label: "Cancelled", bg: "var(--line)", fg: "var(--ink-soft)" };
   }
+  if (status === "DEFAULTED") {
+    return { label: "Defaulted", bg: "var(--rust-pale)", fg: "var(--rust)" };
+  }
   return { label: String(status), bg: "var(--line)", fg: "var(--ink-soft)" };
 }
 
