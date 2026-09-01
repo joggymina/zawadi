@@ -3,6 +3,69 @@ import { AppError } from "../middleware/errorHandler";
 import { getAdminSettings } from "./adminSettings.service";
 import { Decimal } from "@prisma/client/runtime/library";
 
+const DAY_MS = 86_400_000;
+
+function elapsedDays(from: Date, to: Date): number {
+  return Math.max(0, (to.getTime() - from.getTime()) / DAY_MS);
+}
+
+/** Simple interest for `days` (can be fractional). */
+function simpleInterest(principal: Decimal, aprPct: Decimal | number, days: number): Decimal {
+  if (days <= 0) return new Decimal(0);
+  const p = Number(principal);
+  if (p <= 0) return new Decimal(0);
+  const r = Number(aprPct) / 100;
+  return new Decimal((p * r * (days / 365)).toFixed(2));
+}
+
+/**
+ * Package whose term best matches how long the loan has been outstanding:
+ * shortest durationHours >= elapsedHours; else the longest package.
+ */
+async function matchingPackageRate(elapsedHours: number): Promise<Decimal | null> {
+  const packages = await prisma.loanPackage.findMany({
+    orderBy: { durationHours: "asc" },
+  });
+  if (packages.length === 0) return null;
+  const match =
+    packages.find((p) => p.durationHours >= elapsedHours) ?? packages[packages.length - 1];
+  return match.interestRateApr;
+}
+
+/**
+ * Cap interest at the matching shorter-package rate for actual hold time (policy C).
+ * Accrual still uses the loan's original package APR day to day.
+ */
+async function applyEarlyRepayInterestCap(params: {
+  principal: Decimal;
+  interestOwed: Decimal;
+  disbursedAt: Date | null;
+  now: Date;
+}): Promise<{ interestOwed: Decimal; capped: boolean; matchApr: number | null }> {
+  if (!params.disbursedAt) {
+    return { interestOwed: params.interestOwed, capped: false, matchApr: null };
+  }
+  const hours = (params.now.getTime() - params.disbursedAt.getTime()) / (60 * 60 * 1000);
+  const days = elapsedDays(params.disbursedAt, params.now);
+  const matchApr = await matchingPackageRate(hours);
+  if (matchApr === null) {
+    return { interestOwed: params.interestOwed, capped: false, matchApr: null };
+  }
+  const maxInterest = simpleInterest(params.principal, matchApr, days);
+  if (params.interestOwed.greaterThan(maxInterest)) {
+    return {
+      interestOwed: maxInterest,
+      capped: true,
+      matchApr: Number(matchApr),
+    };
+  }
+  return {
+    interestOwed: params.interestOwed,
+    capped: false,
+    matchApr: Number(matchApr),
+  };
+}
+
 export async function createLoanRequest(params: {
   borrowerId: string;
   amount: number;
@@ -32,7 +95,6 @@ export async function createLoanRequest(params: {
     where: { username: { in: params.guarantorUsernames } },
     include: { account: true },
   });
-
   if (guarantors.length !== params.guarantorUsernames.length) {
     throw new AppError("One or more guarantors could not be found.");
   }
@@ -104,7 +166,6 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
       where: { userId: params.funderId },
       data: { principalBalance: { decrement: amount } },
     });
-
     await tx.transaction.create({
       data: {
         userId: params.funderId,
@@ -115,14 +176,12 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
         note: `Funded loan ${loan.id}`,
       },
     });
-
     await tx.loanFunding.create({
       data: { loanId: loan.id, funderId: params.funderId, amount },
     });
 
     const newFundedAmount = loan.fundedAmount.plus(amount);
     const fullyFunded = newFundedAmount.greaterThanOrEqualTo(loan.amount);
-
     let dueAt: Date | null = loan.dueAt;
     if (fullyFunded && loan.package) {
       dueAt = new Date(Date.now() + loan.package.durationHours * 60 * 60 * 1000);
@@ -169,8 +228,11 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
 
 export async function repayLoan(params: { loanId: string; borrowerId: string; amount: number }) {
   const amount = new Decimal(params.amount);
+  const now = new Date();
 
   return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT id FROM "Loan" WHERE id = ${params.loanId} FOR UPDATE`;
+
     const loan = await tx.loan.findUnique({
       where: { id: params.loanId },
       include: { fundings: true },
@@ -179,72 +241,99 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     if (loan.borrowerId !== params.borrowerId) throw new AppError("This isn't your loan.", 403);
     if (loan.status !== "REPAYING") throw new AppError("This loan isn't awaiting repayment.", 422);
 
-    const account = await tx.investmentAccount.findUnique({ where: { userId: params.borrowerId } });
-    if (!account) throw new AppError("Account not found.", 404);
-    if (amount.greaterThan(account.principalBalance.plus(account.interestBalance))) {
+    // Catch up interest to now (fractional days) using original package APR on the loan.
+    let interestOwed = loan.interestOwed;
+    let lastAccrualAt = loan.lastAccrualAt;
+    if (lastAccrualAt && loan.principalOwed.greaterThan(0)) {
+      const days = elapsedDays(lastAccrualAt, now);
+      if (days > 0) {
+        const gained = simpleInterest(loan.principalOwed, loan.interestRateApr, days);
+        interestOwed = interestOwed.plus(gained);
+        lastAccrualAt = now;
+      }
+    }
+
+    // Policy C: cap at matching-duration package rate for time actually held.
+    const cap = await applyEarlyRepayInterestCap({
+      principal: loan.amount,
+      interestOwed,
+      disbursedAt: loan.disbursedAt,
+      now,
+    });
+    interestOwed = cap.interestOwed;
+
+    const outstanding = loan.principalOwed.plus(interestOwed);
+    if (amount.greaterThan(outstanding.plus(0.01))) {
+      throw new AppError(`Outstanding balance is only ${outstanding.toFixed(2)}.`, 422);
+    }
+
+    const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({
+      where: { userId: params.borrowerId },
+    });
+    if (amount.greaterThan(borrowerAccount.principalBalance.plus(borrowerAccount.interestBalance))) {
       throw new AppError("Insufficient balance for this repayment.", 422);
     }
 
-    const principalOwedBefore = loan.principalOwed;
-    const interestOwedBefore = loan.interestOwed;
-    const totalOwed = principalOwedBefore.plus(interestOwedBefore);
-    const pay = amount.greaterThan(totalOwed) ? totalOwed : amount;
+    let remaining = amount;
+    const interestPaid = Decimal.min(remaining, interestOwed);
+    remaining = remaining.minus(interestPaid);
+    const principalPaid = Decimal.min(remaining, loan.principalOwed);
 
-    let interestPay = pay.greaterThan(interestOwedBefore) ? interestOwedBefore : pay;
-    let principalPay = pay.minus(interestPay);
+    const newInterestOwed = interestOwed.minus(interestPaid);
+    const newPrincipalOwed = loan.principalOwed.minus(principalPaid);
+    const fullyRepaid =
+      newPrincipalOwed.lessThanOrEqualTo(0.01) && newInterestOwed.lessThanOrEqualTo(0.01);
 
-    const newInterest = interestOwedBefore.minus(interestPay);
-    const newPrincipal = principalOwedBefore.minus(principalPay);
+    const totalFunded = loan.fundings.reduce((s, f) => s.plus(f.amount), new Decimal(0));
+    const denominator = totalFunded.greaterThan(0) ? totalFunded : loan.amount;
 
     await tx.investmentAccount.update({
       where: { userId: params.borrowerId },
-      data: { principalBalance: { decrement: pay } },
+      data: { principalBalance: { decrement: amount } },
     });
 
-    const updatedAccount = await tx.investmentAccount.findUniqueOrThrow({
-      where: { userId: params.borrowerId },
-    });
+    const noteParts = ["Loan repayment (awaiting approval)"];
+    if (cap.capped && cap.matchApr != null) {
+      noteParts.push(
+        `interest capped at ${cap.matchApr.toFixed(2)}% p.a. for time held (early-repay policy)`,
+      );
+    }
 
     await tx.transaction.create({
       data: {
         userId: params.borrowerId,
         type: "LOAN_REPAYMENT",
-        amount: pay,
-        balanceAfter: updatedAccount.principalBalance.plus(updatedAccount.interestBalance),
+        amount,
+        balanceAfter: borrowerAccount.principalBalance
+          .minus(amount)
+          .plus(borrowerAccount.interestBalance),
         referenceId: loan.id,
-        note: "Loan repayment (pending approval)",
+        note: noteParts.join(" — "),
       },
     });
-
-    const totalFunded = loan.fundings.reduce((s, f) => s.plus(f.amount), new Decimal(0));
-    const distributions = loan.fundings.map((f) => ({
-      funderId: f.funderId,
-      amount: totalFunded.isZero() ? new Decimal(0) : pay.mul(f.amount).div(totalFunded),
-    }));
 
     const repayment = await tx.loanRepayment.create({
       data: {
         loanId: loan.id,
-        amount: pay,
-        status: "PENDING",
-        principalOwedBefore,
-        interestOwedBefore,
+        amount,
+        principalOwedBefore: loan.principalOwed,
+        interestOwedBefore: interestOwed,
         distributions: {
-          create: distributions.map((d) => ({
-            funderId: d.funderId,
-            amount: d.amount,
+          create: loan.fundings.map((f) => ({
+            funderId: f.funderId,
+            amount: amount.mul(f.amount).div(denominator),
           })),
         },
       },
       include: { distributions: true },
     });
 
-    const fullyRepaid = newPrincipal.lessThanOrEqualTo(0) && newInterest.lessThanOrEqualTo(0);
     await tx.loan.update({
       where: { id: loan.id },
       data: {
-        principalOwed: newPrincipal.lessThan(0) ? new Decimal(0) : newPrincipal,
-        interestOwed: newInterest.lessThan(0) ? new Decimal(0) : newInterest,
+        principalOwed: newPrincipalOwed.lessThan(0) ? new Decimal(0) : newPrincipalOwed,
+        interestOwed: newInterestOwed.lessThan(0) ? new Decimal(0) : newInterestOwed,
+        lastAccrualAt: lastAccrualAt ?? loan.lastAccrualAt,
         status: fullyRepaid ? "REPAID" : "REPAYING",
       },
     });

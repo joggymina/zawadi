@@ -13,3 +13,5 @@ app.listen(env.PORT, () => {
 // but move this to a dedicated worker before running more than one API
 // instance, or interest will be accrued once per instance per day.
 scheduleDailyAccrual();
+// server.ts — after scheduleDailyAccrual()
+runDailyAccrual().catch((err) => console.error("Startup accrual failed:", err));
