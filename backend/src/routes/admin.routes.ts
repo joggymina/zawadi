@@ -13,20 +13,20 @@ import {
   rejectRepayment,
   listUsers,
   setUserKyc,
+  listDefaultCandidates,
+  settleDefault,
+  runAllDefaultSettlements,
+  updateSettingsSchema,
+  offerSchema,
+} from "../controllers/admin.controller";
+import {
   listPackages,
   createPackage,
   updatePackage,
   deletePackage,
   activatePackage,
   bulkSetPackageRates,
-  listDefaultCandidates,
-  settleDefault,
-  runAllDefaultSettlements,
-  updateSettingsSchema,
-  offerSchema,
-  // add other schemas you already export
-} from "../controllers/admin.controller";
-// If packages live in package.controller, import those from there instead.
+} from "../controllers/package.controller";
 
 const router = Router();
 router.use(authenticate, requireAdmin);
@@ -52,7 +52,6 @@ router.delete("/packages/:id", asyncHandler(deletePackage));
 router.post("/packages/:id/activate", asyncHandler(activatePackage));
 router.post("/packages/bulk-rate", asyncHandler(bulkSetPackageRates));
 
-// Phase D
 router.get("/defaults/candidates", asyncHandler(listDefaultCandidates));
 router.post("/defaults/run", asyncHandler(runAllDefaultSettlements));
 router.post("/loans/:id/settle-default", asyncHandler(settleDefault));
