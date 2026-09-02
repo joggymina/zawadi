@@ -119,26 +119,26 @@ export function AppLayout() {
                   </span>
                 )}
               </button>
+
               {open && (
                 <div
                   style={{
+                    /* Same centering pattern as .bottom-nav — stays inside the 430px shell */
                     position: "fixed",
-                    /* keep clear of notch / status bar and bottom nav */
-                    top: 56,
-                    left: 12,
-                    right: 12,
-                    maxWidth: 420,
-                    marginLeft: "auto",
-                    marginRight: 12,
-                    maxHeight: "min(70vh, 420px)",
+                    top: 52,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: "min(406px, calc(100vw - 24px))",
+                    maxHeight: "min(70vh, 400px)",
                     overflowY: "auto",
                     WebkitOverflowScrolling: "touch",
-                    background: "var(--card, #fff)",
+                    background: "var(--surface, #fff)",
                     border: "1px solid var(--line)",
                     borderRadius: 12,
                     boxShadow: "0 12px 32px rgba(0,0,0,0.16)",
                     zIndex: 100,
                     padding: 10,
+                    boxSizing: "border-box",
                     textAlign: "left",
                   }}
                 >
@@ -170,7 +170,7 @@ export function AppLayout() {
                       <button
                         type="button"
                         className="btn"
-                        style={{ fontSize: 14, padding: "2px 8px", lineHeight: 1 }}
+                        style={{ fontSize: 16, padding: "0 8px", lineHeight: 1 }}
                         onClick={() => setOpen(false)}
                         aria-label="Close"
                       >
@@ -212,6 +212,7 @@ export function AppLayout() {
                           padding: "12px 10px",
                           marginBottom: 4,
                           cursor: "pointer",
+                          boxSizing: "border-box",
                         }}
                       >
                         <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3 }}>
