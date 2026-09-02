@@ -53,6 +53,7 @@ export function AppLayout() {
       </div>
     );
   }
+
   if (!user) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
@@ -84,6 +85,7 @@ export function AppLayout() {
             </span>
           </div>
 
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div ref={panelRef} style={{ position: "relative" }}>
               <button
                 type="button"
@@ -121,9 +123,9 @@ export function AppLayout() {
               </button>
 
               {open && (
-                <div className="notif-panel"
+                <div
+                  className="notif-panel"
                   style={{
-                    /* Same centering pattern as .bottom-nav — stays inside the 430px shell */
                     position: "fixed",
                     top: 52,
                     left: "50%",
