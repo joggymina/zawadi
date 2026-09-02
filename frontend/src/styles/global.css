@@ -168,3 +168,24 @@ input, button { font-family: inherit; }
   z-index: 80;
   max-width: 88%;
 }
+
+.notif-panel {
+  position: fixed !important;
+  top: 52px !important;
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
+  width: min(406px, calc(100vw - 24px)) !important;
+  max-width: none !important;
+  max-height: min(70vh, 400px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  z-index: 100;
+  padding: 10px;
+  box-sizing: border-box;
+  text-align: left;
+}

@@ -121,7 +121,7 @@ export function AppLayout() {
               </button>
 
               {open && (
-                <div
+                <div className="notif-panel"
                   style={{
                     /* Same centering pattern as .bottom-nav — stays inside the 430px shell */
                     position: "fixed",
