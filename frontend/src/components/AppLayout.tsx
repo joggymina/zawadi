@@ -120,27 +120,28 @@ export function AppLayout() {
                 )}
               </button>
 
-{open && (
-  <div
-    style={{
-      position: "fixed",
-      top: 52,
-      left: "50%",
-      transform: "translateX(-50%)",
-      width: "min(406px, calc(100vw - 24px))",
-      maxHeight: "min(70vh, 400px)",
-      overflowY: "auto",
-      WebkitOverflowScrolling: "touch",
-      background: "var(--surface, #fff)",
-      border: "1px solid var(--line)",
-      borderRadius: 12,
-      boxShadow: "0 12px 32px rgba(0,0,0,0.16)",
-      zIndex: 100,
-      padding: 10,
-      boxSizing: "border-box",
-      textAlign: "left",
-    }}
-  >
+              {open && (
+                <div
+                  style={{
+                    /* Same centering pattern as .bottom-nav — stays inside the 430px shell */
+                    position: "fixed",
+                    top: 52,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: "min(406px, calc(100vw - 24px))",
+                    maxHeight: "min(70vh, 400px)",
+                    overflowY: "auto",
+                    WebkitOverflowScrolling: "touch",
+                    background: "var(--surface, #fff)",
+                    border: "1px solid var(--line)",
+                    borderRadius: 12,
+                    boxShadow: "0 12px 32px rgba(0,0,0,0.16)",
+                    zIndex: 100,
+                    padding: 10,
+                    boxSizing: "border-box",
+                    textAlign: "left",
+                  }}
+                >
                   <div
                     style={{
                       display: "flex",
