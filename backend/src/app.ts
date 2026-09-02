@@ -12,6 +12,7 @@ import adminRoutes from "./routes/admin.routes";
 import settingsRoutes from "./routes/settings.routes";
 import offersRoutes from "./routes/offers.routes";
 import packagesRoutes from "./routes/packages.routes";
+import notificationRoutes from "./routes/notification.routes";
 
 export function createApp() {
   const app = express();
@@ -40,6 +41,7 @@ export function createApp() {
   app.use("/api/settings", settingsRoutes);
   app.use("/api/offers", offersRoutes);
   app.use("/api/packages", packagesRoutes);
+  app.use("/api/notifications", notificationRoutes);
 
   app.use(errorHandler);
   return app;

@@ -3,6 +3,7 @@ import { AppError } from "../middleware/errorHandler";
 import { Decimal } from "@prisma/client/runtime/library";
 import { writeAudit } from "./audit.service";
 import { getAdminSettings } from "./adminSettings.service";
+import * as notifications from "./notification.service";
 
 const DAY_MS = 86_400_000;
 
@@ -88,12 +89,12 @@ export async function settleDefaultedLoan(params: {
           principalOwed: new Decimal(0),
           interestOwed: new Decimal(0),
           lastAccrualAt: lastAccrualAt ?? loan.lastAccrualAt,
-          status: "REPAID",
+          status: "DEFAULTED",
         },
       });
       return {
         loanId: loan.id,
-        status: "REPAID" as const,
+        status: "DEFAULTED" as const,
         collected: new Decimal(0),
         uncollected: new Decimal(0),
       };
@@ -239,22 +240,19 @@ export async function settleDefaultedLoan(params: {
       }
     }
 
-    // Always DEFAULTED when recovery runs via past-due path (not voluntary REPAID)
-const finalStatus = "DEFAULTED" as const;
-
     await tx.loan.update({
       where: { id: loan.id },
       data: {
         principalOwed: new Decimal(0),
         interestOwed: new Decimal(0),
         lastAccrualAt: lastAccrualAt ?? loan.lastAccrualAt,
-        status: finalStatus,
+        status: "DEFAULTED",
       },
     });
 
     return {
       loanId: loan.id,
-      status: finalStatus as "DEFAULTED" | "REPAID",
+      status: "DEFAULTED" as const,
       collected,
       uncollected: remaining,
     };
@@ -271,6 +269,53 @@ const finalStatus = "DEFAULTED" as const;
         uncollected: Number(result.uncollected),
       },
     });
+  }
+
+  try {
+    const loan = await prisma.loan.findUnique({
+      where: { id: result.loanId },
+      include: {
+        borrower: { select: { id: true, username: true } },
+        fundings: { select: { funderId: true } },
+        guarantors: { where: { status: "ACCEPTED" }, select: { userId: true } },
+      },
+    });
+    if (loan) {
+      const inputs: Parameters<typeof notifications.notifyMany>[0] = [];
+      inputs.push({
+        userId: loan.borrowerId,
+        type: "LOAN_DEFAULTED",
+        title: "Loan settled as default",
+        body: "Your loan was closed after due date + grace. Outstanding was recovered from your balance and, if needed, guarantor holds.",
+        meta: {
+          loanId: loan.id,
+          status: result.status,
+          collected: String(result.collected),
+        },
+      });
+      for (const f of loan.fundings) {
+        inputs.push({
+          userId: f.funderId,
+          type: "LOAN_DEFAULT_RETURN",
+          title: "Default recovery credited",
+          body: `A return from @${loan.borrower.username}'s defaulted loan was credited to your account.`,
+          meta: { loanId: loan.id },
+        });
+      }
+      for (const g of loan.guarantors) {
+        inputs.push({
+          userId: g.userId,
+          type: "GUARANTOR_HOLD_DRAWN",
+          title: "Guarantor hold may have been used",
+          body: `Default settlement ran on @${loan.borrower.username}'s loan. Check your account if a hold was drawn.`,
+          meta: { loanId: loan.id },
+        });
+      }
+      await notifications.notifyMany(inputs);
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Failed to write default notifications:", err);
   }
 
   return result;
