@@ -84,7 +84,6 @@ export function AppLayout() {
             </span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div ref={panelRef} style={{ position: "relative" }}>
               <button
                 type="button"
@@ -123,18 +122,24 @@ export function AppLayout() {
               {open && (
                 <div
                   style={{
-                    position: "absolute",
-                    right: 0,
-                    top: "110%",
-                    width: 300,
-                    maxHeight: 360,
+                    position: "fixed",
+                    /* keep clear of notch / status bar and bottom nav */
+                    top: 56,
+                    left: 12,
+                    right: 12,
+                    maxWidth: 420,
+                    marginLeft: "auto",
+                    marginRight: 12,
+                    maxHeight: "min(70vh, 420px)",
                     overflowY: "auto",
+                    WebkitOverflowScrolling: "touch",
                     background: "var(--card, #fff)",
                     border: "1px solid var(--line)",
                     borderRadius: 12,
-                    boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-                    zIndex: 50,
-                    padding: 8,
+                    boxShadow: "0 12px 32px rgba(0,0,0,0.16)",
+                    zIndex: 100,
+                    padding: 10,
+                    textAlign: "left",
                   }}
                 >
                   <div
@@ -142,26 +147,48 @@ export function AppLayout() {
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      padding: "4px 6px 8px",
+                      padding: "4px 4px 10px",
+                      borderBottom: "1px solid var(--line)",
+                      marginBottom: 6,
                     }}
                   >
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>Notifications</span>
-                    {unread > 0 && (
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>Notifications</span>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {unread > 0 && (
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ fontSize: 11, padding: "4px 8px" }}
+                          onClick={async () => {
+                            await notificationsApi.markAllRead();
+                            await loadNotes();
+                          }}
+                        >
+                          Mark all read
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="btn"
-                        style={{ fontSize: 11, padding: "2px 8px" }}
-                        onClick={async () => {
-                          await notificationsApi.markAllRead();
-                          await loadNotes();
-                        }}
+                        style={{ fontSize: 14, padding: "2px 8px", lineHeight: 1 }}
+                        onClick={() => setOpen(false)}
+                        aria-label="Close"
                       >
-                        Mark all read
+                        ×
                       </button>
-                    )}
+                    </div>
                   </div>
+
                   {items.length === 0 ? (
-                    <div style={{ padding: 12, fontSize: 12.5, color: "var(--ink-soft)" }}>
+                    <div
+                      style={{
+                        padding: "20px 12px",
+                        fontSize: 13,
+                        color: "var(--ink-soft)",
+                        textAlign: "left",
+                        lineHeight: 1.45,
+                      }}
+                    >
                       No notifications yet.
                     </div>
                   ) : (
@@ -181,17 +208,27 @@ export function AppLayout() {
                           textAlign: "left",
                           border: "none",
                           background: n.readAt ? "transparent" : "var(--green-pale)",
-                          borderRadius: 8,
-                          padding: "10px 8px",
+                          borderRadius: 10,
+                          padding: "12px 10px",
                           marginBottom: 4,
                           cursor: "pointer",
                         }}
                       >
-                        <div style={{ fontSize: 12.5, fontWeight: 600 }}>{n.title}</div>
-                        <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3 }}>
+                          {n.title}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "var(--ink-soft)",
+                            marginTop: 4,
+                            lineHeight: 1.4,
+                            wordBreak: "break-word",
+                          }}
+                        >
                           {n.body}
                         </div>
-                        <div style={{ fontSize: 10.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                        <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 6 }}>
                           {new Date(n.createdAt).toLocaleString()}
                         </div>
                       </button>
