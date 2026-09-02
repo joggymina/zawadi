@@ -7,11 +7,8 @@ import type { PendingGuarantee } from "../api/loans";
 import { AmountModal } from "../components/AmountModal";
 import { fmt, pct, errorMessage, formatDuration } from "../utils/format";
 import { useToast } from "../context/ToastContext";
-import { NewLoanModal } from "../components/NewLoanModal";
-
 import { useAuth } from "../context/AuthContext";
-// ...
-
+import { NewLoanModal } from "../components/NewLoanModal";
 
 type SubTab = "marketplace" | "funded" | "mine" | "guarantees";
 
@@ -116,7 +113,6 @@ export function LoansPage() {
   );
 
   async function respond(loanId: string, accept: boolean) {
-    const verb = accept ? "Accept" : "Decline";
     if (
       !window.confirm(
         accept
@@ -286,7 +282,9 @@ export function LoansPage() {
                       <span style={{ color: "var(--ink-soft)" }}>Loan size</span>
                       <span className="mono">{fmt(l.amount)}</span>
                     </div>
-                    {(l.status === "REPAYING" || l.status === "REPAID") && (
+                    {(l.status === "REPAYING" ||
+                      l.status === "REPAID" ||
+                      l.status === "DEFAULTED") && (
                       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
                         <span style={{ color: "var(--ink-soft)" }}>Outstanding (loan)</span>
                         <span className="mono">
@@ -295,6 +293,11 @@ export function LoansPage() {
                       </div>
                     )}
                   </div>
+                  {l.status === "DEFAULTED" && (
+                    <div style={{ fontSize: 11.5, color: "var(--rust)", marginTop: 8 }}>
+                      Recovered via default settlement (borrower and/or guarantor holds).
+                    </div>
+                  )}
                   {myReturns.length > 0 && (
                     <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
                       <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>Your share of repayments</div>
@@ -468,12 +471,14 @@ export function LoansPage() {
                     {(l.fundings?.length ?? 0) > 0 && (
                       <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
                         Funded by{" "}
-                        {l.fundings!.map((f) => `@${f.funder?.username ?? "?"} ${fmt(f.amount)}`).join(
-                          " · ",
-                        )}
+                        {l.fundings!
+                          .map((f) => `@${f.funder?.username ?? "?"} ${fmt(f.amount)}`)
+                          .join(" · ")}
                       </div>
                     )}
-                    {(l.status === "REPAYING" || l.status === "REPAID") && (
+                    {(l.status === "REPAYING" ||
+                      l.status === "REPAID" ||
+                      l.status === "DEFAULTED") && (
                       <div
                         style={{
                           marginTop: 10,
@@ -489,6 +494,12 @@ export function LoansPage() {
                         <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
                           Principal {fmt(l.principalOwed)} + interest {fmt(l.interestOwed)}
                         </div>
+                        {l.status === "DEFAULTED" && (
+                          <div style={{ fontSize: 11.5, color: "var(--rust)", marginTop: 6 }}>
+                            Closed after default settlement. Funders were credited from your balance
+                            and, if needed, guarantor holds.
+                          </div>
+                        )}
                         {l.status === "REPAYING" && (
                           <button
                             className="btn btn-primary"
@@ -596,7 +607,9 @@ export function LoansPage() {
           onSubmit={async (params) => {
             await loansApi.createLoan(params);
             await load();
-            showToast("Loan request sent — waiting on guarantors");
+            showToast(
+              "Loan request sent — waiting on guarantors. Share your invite link if friends need to invest first.",
+            );
             setNewLoanOpen(false);
             setSub("mine");
           }}

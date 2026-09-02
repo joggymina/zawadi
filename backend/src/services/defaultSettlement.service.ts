@@ -239,7 +239,8 @@ export async function settleDefaultedLoan(params: {
       }
     }
 
-    const finalStatus = remaining.greaterThan(0.01) ? "DEFAULTED" : "REPAID";
+    // Always DEFAULTED when recovery runs via past-due path (not voluntary REPAID)
+const finalStatus = "DEFAULTED" as const;
 
     await tx.loan.update({
       where: { id: loan.id },
