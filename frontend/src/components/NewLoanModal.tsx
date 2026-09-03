@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AdminSettings, LoanPackage } from "../api/types";
 import * as publicApi from "../api/public";
 import { fmt, errorMessage, formatDuration } from "../utils/format";
@@ -12,6 +12,24 @@ interface NewLoanModalProps {
     guarantorUsernames: string[];
     packageId: string;
   }) => Promise<unknown>;
+}
+
+/** Match backend utils/money.ts annualToDaily */
+function annualToDaily(annualPct: number): number {
+  const a = annualPct / 100;
+  return Math.pow(1 + a, 1 / 365) - 1;
+}
+
+/**
+ * Expected interest if the full principal stays outstanding for the
+ * package term (compound daily — same idea as dailyAccrual.job).
+ */
+function estimateInterest(principal: number, aprPct: number, durationHours: number): number {
+  if (principal <= 0 || durationHours <= 0) return 0;
+  const days = durationHours / 24;
+  const daily = annualToDaily(aprPct);
+  const interest = principal * (Math.pow(1 + daily, days) - 1);
+  return Math.round(interest * 100) / 100;
 }
 
 export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps) {
@@ -38,6 +56,22 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
   const val = parseFloat(amount) || 0;
   const threshold = val * (1 + Number(settings.guarantorCoverageExtraPct) / 100);
   const selected = packages.find((p) => p.id === packageId);
+
+  const repaymentPreview = useMemo(() => {
+    if (!selected || val <= 0) return null;
+    const apr = Number(selected.interestRateApr ?? 0);
+    const interest = estimateInterest(val, apr, selected.durationHours);
+    const total = Math.round((val + interest) * 100) / 100;
+    return {
+      apr,
+      days: selected.durationHours / 24,
+      durationLabel: formatDuration(selected.durationHours),
+      graceLabel: selected.graceHours ? formatDuration(selected.graceHours) : null,
+      principal: val,
+      interest,
+      total,
+    };
+  }, [selected, val]);
 
   function updateGuarantor(i: number, value: string) {
     setGuarantors((g) => g.map((existing, idx) => (idx === i ? value : existing)));
@@ -130,11 +164,59 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
             className="field-input mono"
             style={{ fontSize: 18 }}
             type="number"
+            min="0"
+            step="0.01"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0.00"
           />
         </div>
+
+        {/* Expected repayment at end of package term */}
+        {repaymentPreview && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: "12px 14px",
+              borderRadius: 12,
+              background: "var(--surface-2, #f8fafc)",
+              border: "1px solid var(--line, #e5e7eb)",
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 8 }}>
+              If you repay at the end of {repaymentPreview.durationLabel}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr auto",
+                gap: "6px 12px",
+                fontSize: 14,
+              }}
+            >
+              <span style={{ color: "var(--ink-soft)" }}>Principal</span>
+              <span className="mono" style={{ fontWeight: 600 }}>
+                {fmt(repaymentPreview.principal)}
+              </span>
+              <span style={{ color: "var(--ink-soft)" }}>
+                Est. interest ({repaymentPreview.apr.toFixed(2)}% p.a.)
+              </span>
+              <span className="mono" style={{ fontWeight: 600 }}>
+                {fmt(repaymentPreview.interest)}
+              </span>
+              <span style={{ fontWeight: 600 }}>Expected total to repay</span>
+              <span className="mono" style={{ fontWeight: 700, fontSize: 16, color: "var(--accent, #0d6efd)" }}>
+                {fmt(repaymentPreview.total)}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 8, lineHeight: 1.4 }}>
+              Estimate assumes the full amount stays outstanding for the whole term
+              (compound daily). Early repayment may cost less; late repayment after due
+              date can cost more
+              {repaymentPreview.graceLabel ? ` (grace: ${repaymentPreview.graceLabel})` : ""}.
+            </div>
+          </div>
+        )}
 
         <div style={{ marginTop: 14 }}>
           <label className="field-label">Purpose (optional)</label>
@@ -146,11 +228,8 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
           />
         </div>
 
-        <div style={{ marginTop: 18, fontSize: 13.5, fontWeight: 500 }}>
-          Enter {required} guarantors
-        </div>
-        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 3 }}>
-          Together their invested principal must cover at least{" "}
+        <div style={{ marginTop: 18, fontSize: 13, color: "var(--ink-soft)" }}>
+          Guarantors must together hold at least{" "}
           {val > 0 ? fmt(threshold) : "the loan amount"} (
           {100 + Number(settings.guarantorCoverageExtraPct)}% of the loan).
         </div>
