@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { getAdminSettings } from "./adminSettings.service";
 import { assertCanDebitPrincipal } from "./guarantorHold.service";
+import * as notifications from "./notification.service";
 import { Decimal } from "@prisma/client/runtime/library";
 
 const DAY_MS = 86_400_000;
@@ -90,7 +91,6 @@ export async function createLoanRequest(params: {
     throw new AppError("You can't guarantee your own loan.");
   }
 
-  // Required coverage = loan × (1 + buffer%)
   const threshold = amount.mul(1 + Number(settings.guarantorCoverageExtraPct) / 100);
   const combined = guarantors.reduce(
     (sum, g) => sum.plus(g.account?.principalBalance ?? 0),
@@ -103,7 +103,6 @@ export async function createLoanRequest(params: {
     );
   }
 
-  // Equal share of coverage — this is the locked amount, not full principal
   const holdEach = threshold.div(guarantors.length).toDecimalPlaces(2);
 
   for (const g of guarantors) {
@@ -116,7 +115,12 @@ export async function createLoanRequest(params: {
     }
   }
 
-  return prisma.loan.create({
+  const borrower = await prisma.user.findUnique({
+    where: { id: params.borrowerId },
+    select: { username: true },
+  });
+
+  const loan = await prisma.loan.create({
     data: {
       borrowerId: params.borrowerId,
       amount,
@@ -137,6 +141,18 @@ export async function createLoanRequest(params: {
       package: true,
     },
   });
+
+  await notifications.notifyMany(
+    guarantors.map((g) => ({
+      userId: g.id,
+      type: "GUARANTOR_INVITE",
+      title: "Guarantee request",
+      body: `@${borrower?.username ?? "Someone"} asked you to guarantee a loan of ${amount.toFixed(2)}. Open Loans → To guarantee to respond.`,
+      meta: { loanId: loan.id, amount: amount.toFixed(2) },
+    })),
+  );
+
+  return loan;
 }
 
 export async function respondAsGuarantor(params: {
@@ -144,7 +160,7 @@ export async function respondAsGuarantor(params: {
   guarantorId: string;
   accept: boolean;
 }) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const loan = await tx.loan.findUnique({
       where: { id: params.loanId },
       include: { guarantors: true },
@@ -198,33 +214,77 @@ export async function respondAsGuarantor(params: {
       data: { status: "ACCEPTED", respondedAt: new Date() },
     });
 
-    const updated = await tx.loanGuarantor.findMany({ where: { loanId: loan.id } });
-    const allAccepted = updated.every((g) => g.status === "ACCEPTED");
-    if (allAccepted) {
-      await tx.loan.update({ where: { id: loan.id }, data: { status: "OPEN" } });
+    const pendingLeft = await tx.loanGuarantor.count({
+      where: { loanId: loan.id, status: "PENDING" },
+    });
+
+    if (pendingLeft === 0) {
+      await tx.loan.update({
+        where: { id: loan.id },
+        data: { status: "OPEN" },
+      });
       return { loanId: loan.id, status: "OPEN" as const };
     }
+
     return { loanId: loan.id, status: "PENDING_GUARANTORS" as const };
   });
+
+  try {
+    const loan = await prisma.loan.findUnique({
+      where: { id: result.loanId },
+      include: { borrower: { select: { id: true, username: true } } },
+    });
+    const guarantor = await prisma.user.findUnique({
+      where: { id: params.guarantorId },
+      select: { username: true },
+    });
+    if (loan) {
+      if (!params.accept) {
+        await notifications.notify({
+          userId: loan.borrowerId,
+          type: "GUARANTOR_DECLINED",
+          title: "Guarantor declined",
+          body: `@${guarantor?.username ?? "A guarantor"} declined. Your loan request was cancelled.`,
+          meta: { loanId: loan.id },
+        });
+      } else if (result.status === "OPEN") {
+        await notifications.notify({
+          userId: loan.borrowerId,
+          type: "LOAN_OPEN",
+          title: "Loan open for funding",
+          body: "All guarantors accepted. Your loan is now open on the marketplace.",
+          meta: { loanId: loan.id },
+        });
+      } else {
+        await notifications.notify({
+          userId: loan.borrowerId,
+          type: "GUARANTOR_ACCEPTED",
+          title: "Guarantor accepted",
+          body: `@${guarantor?.username ?? "A guarantor"} accepted. Waiting on remaining guarantors.`,
+          meta: { loanId: loan.id },
+        });
+      }
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Guarantor response notification failed:", err);
+  }
+
+  return result;
 }
 
 export async function listPendingGuarantees(guarantorId: string) {
   return prisma.loanGuarantor.findMany({
-    where: {
-      userId: guarantorId,
-      status: "PENDING",
-      loan: { status: "PENDING_GUARANTORS" },
-    },
+    where: { userId: guarantorId, status: "PENDING" },
     include: {
       loan: {
         include: {
-          package: true,
           borrower: { select: { username: true } },
-          guarantors: { include: { user: { select: { username: true } } } },
+          package: true,
         },
       },
     },
-    orderBy: { loan: { createdAt: "desc" } },
+    orderBy: { pledgedAt: "desc" },
   });
 }
 
@@ -232,12 +292,12 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
   const amount = new Decimal(params.amount);
   await assertCanDebitPrincipal(params.funderId, amount);
 
-  return prisma.$transaction(async (tx) => {
+  const updatedLoan = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT id FROM "Loan" WHERE id = ${params.loanId} FOR UPDATE`;
 
     const loan = await tx.loan.findUnique({
       where: { id: params.loanId },
-      include: { package: true },
+      include: { package: true, fundings: true },
     });
     if (!loan) throw new AppError("Loan not found.", 404);
     if (loan.status !== "OPEN") throw new AppError("This loan is not open for funding.", 422);
@@ -250,34 +310,38 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
       throw new AppError(`Only ${remaining.toFixed(2)} remains to be funded.`, 422);
     }
 
-    const funderAccount = await tx.investmentAccount.findUnique({
+    const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
       where: { userId: params.funderId },
     });
-    if (!funderAccount) throw new AppError("Account not found.", 404);
-    if (amount.greaterThan(funderAccount.principalBalance)) {
-      throw new AppError("Insufficient investment principal.", 422);
+    if (funderAccount.principalBalance.lessThan(amount)) {
+      throw new AppError("Insufficient principal balance.", 422);
     }
 
     await tx.investmentAccount.update({
       where: { userId: params.funderId },
       data: { principalBalance: { decrement: amount } },
     });
+    const afterFunder = await tx.investmentAccount.findUniqueOrThrow({
+      where: { userId: params.funderId },
+    });
     await tx.transaction.create({
       data: {
         userId: params.funderId,
         type: "LOAN_FUND",
         amount,
-        balanceAfter: funderAccount.principalBalance.minus(amount).plus(funderAccount.interestBalance),
+        balanceAfter: afterFunder.principalBalance.plus(afterFunder.interestBalance),
         referenceId: loan.id,
         note: `Funded loan ${loan.id}`,
       },
     });
+
     await tx.loanFunding.create({
       data: { loanId: loan.id, funderId: params.funderId, amount },
     });
 
-    const newFundedAmount = loan.fundedAmount.plus(amount);
-    const fullyFunded = newFundedAmount.greaterThanOrEqualTo(loan.amount);
+    const newFunded = loan.fundedAmount.plus(amount);
+    const fullyFunded = newFunded.greaterThanOrEqualTo(loan.amount);
+
     let dueAt: Date | null = loan.dueAt;
     if (fullyFunded && loan.package) {
       dueAt = new Date(Date.now() + loan.package.durationHours * 60 * 60 * 1000);
@@ -286,7 +350,7 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
     const updatedLoan = await tx.loan.update({
       where: { id: loan.id },
       data: {
-        fundedAmount: newFundedAmount,
+        fundedAmount: newFunded,
         status: fullyFunded ? "REPAYING" : "OPEN",
         principalOwed: fullyFunded ? loan.amount : loan.principalOwed,
         lastAccrualAt: fullyFunded ? new Date() : loan.lastAccrualAt,
@@ -320,6 +384,32 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
 
     return updatedLoan;
   });
+
+  try {
+    const funder = await prisma.user.findUnique({
+      where: { id: params.funderId },
+      select: { username: true },
+    });
+    const fullyFunded = updatedLoan.status === "REPAYING";
+    await notifications.notify({
+      userId: updatedLoan.borrowerId,
+      type: fullyFunded ? "LOAN_FUNDED" : "LOAN_FUND_PARTIAL",
+      title: fullyFunded ? "Loan fully funded" : "Loan received funding",
+      body: fullyFunded
+        ? `@${funder?.username ?? "A funder"} completed funding. Funds were disbursed to your account.`
+        : `@${funder?.username ?? "A funder"} funded ${params.amount}. Still open for more funding.`,
+      meta: {
+        loanId: updatedLoan.id,
+        amount: params.amount,
+        status: updatedLoan.status,
+      },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Fund notification failed:", err);
+  }
+
+  return updatedLoan;
 }
 
 export async function repayLoan(params: { loanId: string; borrowerId: string; amount: number }) {
@@ -349,60 +439,55 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       }
     }
 
-    const cap = await applyEarlyRepayInterestCap({
-      principal: loan.amount,
+    const capped = await applyEarlyRepayInterestCap({
+      principal: loan.principalOwed,
       interestOwed,
       disbursedAt: loan.disbursedAt,
       now,
     });
-    interestOwed = cap.interestOwed;
+    interestOwed = capped.interestOwed;
 
     const outstanding = loan.principalOwed.plus(interestOwed);
-    if (amount.greaterThan(outstanding.plus(0.01))) {
+    if (amount.greaterThan(outstanding)) {
       throw new AppError(`Outstanding balance is only ${outstanding.toFixed(2)}.`, 422);
     }
 
-    const borrowerAccount = await tx.investmentAccount.findUniqueOrThrow({
+    await assertCanDebitPrincipal(params.borrowerId, amount);
+
+    const account = await tx.investmentAccount.findUniqueOrThrow({
       where: { userId: params.borrowerId },
     });
-    if (amount.greaterThan(borrowerAccount.principalBalance.plus(borrowerAccount.interestBalance))) {
-      throw new AppError("Insufficient balance for this repayment.", 422);
+    if (account.principalBalance.lessThan(amount)) {
+      throw new AppError("Insufficient principal balance.", 422);
     }
-
-    let remaining = amount;
-    const interestPaid = Decimal.min(remaining, interestOwed);
-    remaining = remaining.minus(interestPaid);
-    const principalPaid = Decimal.min(remaining, loan.principalOwed);
-    const newInterestOwed = interestOwed.minus(interestPaid);
-    const newPrincipalOwed = loan.principalOwed.minus(principalPaid);
-    const fullyRepaid =
-      newPrincipalOwed.lessThanOrEqualTo(0.01) && newInterestOwed.lessThanOrEqualTo(0.01);
-
-    const totalFunded = loan.fundings.reduce((s, f) => s.plus(f.amount), new Decimal(0));
-    const denominator = totalFunded.greaterThan(0) ? totalFunded : loan.amount;
 
     await tx.investmentAccount.update({
       where: { userId: params.borrowerId },
       data: { principalBalance: { decrement: amount } },
     });
-
-    const noteParts = ["Loan repayment (awaiting approval)"];
-    if (cap.capped && cap.matchApr != null) {
-      noteParts.push(
-        `interest capped at ${cap.matchApr.toFixed(2)}% p.a. for time held (early-repay policy)`,
-      );
-    }
-
+    const after = await tx.investmentAccount.findUniqueOrThrow({
+      where: { userId: params.borrowerId },
+    });
     await tx.transaction.create({
       data: {
         userId: params.borrowerId,
         type: "LOAN_REPAYMENT",
         amount,
-        balanceAfter: borrowerAccount.principalBalance
-          .minus(amount)
-          .plus(borrowerAccount.interestBalance),
+        balanceAfter: after.principalBalance.plus(after.interestBalance),
         referenceId: loan.id,
-        note: noteParts.join(" — "),
+        note: "Loan repayment (awaiting approval)",
+      },
+    });
+
+    const towardInterest = Decimal.min(amount, interestOwed);
+    const towardPrincipal = amount.minus(towardInterest);
+
+    await tx.loan.update({
+      where: { id: loan.id },
+      data: {
+        principalOwed: loan.principalOwed.minus(towardPrincipal),
+        interestOwed: interestOwed.minus(towardInterest),
+        lastAccrualAt: lastAccrualAt ?? loan.lastAccrualAt,
       },
     });
 
@@ -410,25 +495,9 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       data: {
         loanId: loan.id,
         amount,
+        status: "PENDING",
         principalOwedBefore: loan.principalOwed,
         interestOwedBefore: interestOwed,
-        distributions: {
-          create: loan.fundings.map((f) => ({
-            funderId: f.funderId,
-            amount: amount.mul(f.amount).div(denominator),
-          })),
-        },
-      },
-      include: { distributions: true },
-    });
-
-    await tx.loan.update({
-      where: { id: loan.id },
-      data: {
-        principalOwed: newPrincipalOwed.lessThan(0) ? new Decimal(0) : newPrincipalOwed,
-        interestOwed: newInterestOwed.lessThan(0) ? new Decimal(0) : newInterestOwed,
-        lastAccrualAt: lastAccrualAt ?? loan.lastAccrualAt,
-        status: fullyRepaid ? "REPAID" : "REPAYING",
       },
     });
 
@@ -440,44 +509,76 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
   const settings = await getAdminSettings();
   const sharePct = Number(settings.platformInterestSharePct ?? 10) / 100;
 
-  return prisma.$transaction(async (tx) => {
+  const repayment = await prisma.$transaction(async (tx) => {
     const repayment = await tx.loanRepayment.findUnique({
       where: { id: params.repaymentId },
-      include: { distributions: true, loan: true },
+      include: {
+        loan: { include: { fundings: true } },
+      },
     });
     if (!repayment) throw new AppError("Repayment not found.", 404);
     if (repayment.status !== "PENDING") {
       throw new AppError("This repayment has already been reviewed.", 422);
     }
 
-    const total = repayment.amount;
-    const interestPart = Decimal.min(total, repayment.interestOwedBefore);
-    const principalPart = total.minus(interestPart);
+    const interestPart = Decimal.min(repayment.amount, repayment.interestOwedBefore);
+    const principalPart = repayment.amount.minus(interestPart);
 
-    for (const d of repayment.distributions) {
-      if (total.lessThanOrEqualTo(0) || d.amount.lessThanOrEqualTo(0)) continue;
+    const totalFunded = repayment.loan.fundings.reduce(
+      (s, f) => s.plus(f.amount),
+      new Decimal(0),
+    );
+    const denom = totalFunded.greaterThan(0) ? totalFunded : repayment.loan.amount;
 
-      const dPrincipal = principalPart.mul(d.amount).div(total).toDecimalPlaces(2);
-      const dInterest = interestPart.mul(d.amount).div(total).toDecimalPlaces(2);
+    for (const f of repayment.loan.fundings) {
+      const weight = f.amount.div(denom);
+      const dPrincipal = principalPart.mul(weight).toDecimalPlaces(2);
+      const dInterest = interestPart.mul(weight).toDecimalPlaces(2);
       const fee = dInterest.mul(sharePct).toDecimalPlaces(2);
       const credit = dPrincipal.plus(dInterest).minus(fee);
       if (credit.lessThanOrEqualTo(0)) continue;
 
       const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
-        where: { userId: d.funderId },
+        where: { userId: f.funderId },
       });
       await tx.investmentAccount.update({
-        where: { userId: d.funderId },
+        where: { userId: f.funderId },
         data: { principalBalance: { increment: credit } },
       });
       await tx.transaction.create({
         data: {
-          userId: d.funderId,
+          userId: f.funderId,
           type: "LOAN_RETURN",
           amount: credit,
-          balanceAfter: funderAccount.principalBalance.plus(credit).plus(funderAccount.interestBalance),
+          balanceAfter: funderAccount.principalBalance
+            .plus(credit)
+            .plus(funderAccount.interestBalance),
           referenceId: repayment.loanId,
           note: `Return from loan ${repayment.loanId} (platform fee on interest ${fee.toFixed(2)})`,
+        },
+      });
+      await tx.loanRepaymentDistribution.create({
+        data: {
+          repaymentId: repayment.id,
+          funderId: f.funderId,
+          amount: credit,
+        },
+      });
+    }
+
+    const loan = repayment.loan;
+    const newPrincipal = loan.principalOwed;
+    const newInterest = loan.interestOwed;
+    const fullyRepaid =
+      newPrincipal.lessThanOrEqualTo(0.01) && newInterest.lessThanOrEqualTo(0.01);
+
+    if (fullyRepaid) {
+      await tx.loan.update({
+        where: { id: loan.id },
+        data: {
+          principalOwed: new Decimal(0),
+          interestOwed: new Decimal(0),
+          status: "REPAID",
         },
       });
     }
@@ -487,10 +588,50 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
       data: { status: "APPROVED", reviewedAt: new Date(), reviewedById: params.adminId },
     });
   });
+
+  try {
+    const full = await prisma.loanRepayment.findUnique({
+      where: { id: repayment.id },
+      include: {
+        loan: {
+          include: {
+            borrower: { select: { id: true, username: true } },
+            fundings: { select: { funderId: true } },
+          },
+        },
+      },
+    });
+    if (full?.loan) {
+      const inputs: Parameters<typeof notifications.notifyMany>[0] = [
+        {
+          userId: full.loan.borrowerId,
+          type: "REPAYMENT_APPROVED",
+          title: "Repayment approved",
+          body: `Your repayment of ${full.amount} was approved and distributed to funders.`,
+          meta: { loanId: full.loanId, repaymentId: full.id },
+        },
+      ];
+      for (const f of full.loan.fundings) {
+        inputs.push({
+          userId: f.funderId,
+          type: "REPAYMENT_DISTRIBUTED",
+          title: "Repayment received",
+          body: `A repayment on @${full.loan.borrower.username}'s loan was approved. Check your account for the return.`,
+          meta: { loanId: full.loanId, repaymentId: full.id },
+        });
+      }
+      await notifications.notifyMany(inputs);
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Approve repayment notification failed:", err);
+  }
+
+  return repayment;
 }
 
 export async function rejectRepayment(params: { repaymentId: string; adminId: string }) {
-  return prisma.$transaction(async (tx) => {
+  const repayment = await prisma.$transaction(async (tx) => {
     const repayment = await tx.loanRepayment.findUnique({
       where: { id: params.repaymentId },
       include: { loan: true },
@@ -534,4 +675,25 @@ export async function rejectRepayment(params: { repaymentId: string; adminId: st
       data: { status: "REJECTED", reviewedAt: new Date(), reviewedById: params.adminId },
     });
   });
+
+  try {
+    const full = await prisma.loanRepayment.findUnique({
+      where: { id: repayment.id },
+      include: { loan: true },
+    });
+    if (full?.loan) {
+      await notifications.notify({
+        userId: full.loan.borrowerId,
+        type: "REPAYMENT_REJECTED",
+        title: "Repayment not approved",
+        body: `Your repayment of ${full.amount} was not approved and was refunded to your principal.`,
+        meta: { loanId: full.loanId, repaymentId: full.id },
+      });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Reject repayment notification failed:", err);
+  }
+
+  return repayment;
 }

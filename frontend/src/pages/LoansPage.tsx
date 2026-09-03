@@ -413,7 +413,7 @@ export function LoansPage() {
               style={{ width: "100%", marginTop: 8, padding: "10px 0", fontSize: 12.5 }}
               onClick={async () => {
                 const url = `${window.location.origin}/register?ref=${encodeURIComponent(user.username)}`;
-                const text = `Join Zawadi and invest so you can guarantee my loan: ${url}`;
+                const text = `${url}`;
                 try {
                   await navigator.clipboard.writeText(text);
                   showToast("Invite link copied");
