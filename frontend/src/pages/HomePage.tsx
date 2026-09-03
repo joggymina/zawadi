@@ -8,6 +8,10 @@ import { AmountModal } from "../components/AmountModal";
 import { fmt, pct, errorMessage } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 
+import * as paymentsApi from "../api/payments";
+
+
+
 export function HomePage() {
   const showToast = useToast();
   const [account, setAccount] = useState<AccountSummary | null>(null);
@@ -109,15 +113,33 @@ export function HomePage() {
         ))}
       </div>
 
-      {modal === "invest" && (
+// in invest modal:
+{modal === "invest" && (
   <AmountModal
-    title="Invest"
-    confirmLabel="Invest"
+    title="Invest via M-Pesa"
+    confirmLabel="Send STK"
+    confirmHint="You will get an M-Pesa prompt on the phone linked to your account."
+    needsConfirm
     onClose={() => setModal(null)}
     onSubmit={async (amt) => {
-      await accountApi.invest(amt);
-      await load();
-      showToast(`Invested ${fmt(amt)}`);
+      const res = await paymentsApi.deposit(amt);
+      showToast(res.message || "Check your phone for M-Pesa PIN");
+      // Optional: poll until SUCCESS
+      const id = res.intentId;
+      for (let i = 0; i < 24; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const intent = await paymentsApi.getIntent(id);
+        if (intent.status === "SUCCESS") {
+          await load();
+          showToast(`Deposit of ${fmt(amt)} received`);
+          setModal(null);
+          return;
+        }
+        if (intent.status === "FAILED") {
+          throw new Error("Payment was not completed.");
+        }
+      }
+      showToast("Waiting for M-Pesa confirmation — check notifications shortly");
       setModal(null);
     }}
   />

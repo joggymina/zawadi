@@ -1,8 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
 
-// Fail fast: a missing secret in production should stop the process at
-// boot, not surface as a confusing 500 the first time it's needed.
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(4000),
@@ -14,6 +12,13 @@ const envSchema = z.object({
   ADMIN_BOOTSTRAP_USERNAME: z.string().optional(),
   ADMIN_BOOTSTRAP_PASSWORD: z.string().optional(),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
+
+  // PayHero (optional at boot — deposit fails clearly if missing)
+  PAYHERO_API_USERNAME: z.string().optional(),
+  PAYHERO_API_PASSWORD: z.string().optional(),
+  PAYHERO_BASIC_TOKEN: z.string().optional(),
+  PAYHERO_CHANNEL_ID: z.string().optional(),
+  PAYHERO_CALLBACK_URL: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -13,7 +13,8 @@ import settingsRoutes from "./routes/settings.routes";
 import offersRoutes from "./routes/offers.routes";
 import packagesRoutes from "./routes/packages.routes";
 import notificationRoutes from "./routes/notification.routes";
-
+import paymentRoutes from "./routes/payment.routes";
+// ...
 export function createApp() {
   const app = express();
 
@@ -43,6 +44,7 @@ export function createApp() {
   app.use("/api/packages", packagesRoutes);
   app.use("/api/notifications", notificationRoutes);
 
+  app.use("/api/payments", paymentRoutes);
   app.use(errorHandler);
   return app;
 }
