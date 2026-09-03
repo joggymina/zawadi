@@ -113,7 +113,7 @@ export function HomePage() {
         ))}
       </div>
 
-// in invest modal:
+
 {modal === "invest" && (
   <AmountModal
     title="Invest via M-Pesa"
