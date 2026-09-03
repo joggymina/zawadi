@@ -14,7 +14,7 @@ import offersRoutes from "./routes/offers.routes";
 import packagesRoutes from "./routes/packages.routes";
 import notificationRoutes from "./routes/notification.routes";
 import paymentRoutes from "./routes/payment.routes";
-// ...
+
 export function createApp() {
   const app = express();
 
@@ -28,7 +28,7 @@ export function createApp() {
       exposedHeaders: ["X-Access-Token"],
     }),
   );
-  app.use(express.json({ limit: "100kb" }));
+  app.use(express.json({ limit: "6mb" }));
   app.use(cookieParser());
 
   app.use(rateLimit({ windowMs: 60 * 1000, max: 120 }));
@@ -43,8 +43,8 @@ export function createApp() {
   app.use("/api/offers", offersRoutes);
   app.use("/api/packages", packagesRoutes);
   app.use("/api/notifications", notificationRoutes);
-
   app.use("/api/payments", paymentRoutes);
+
   app.use(errorHandler);
   return app;
 }

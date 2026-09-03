@@ -57,6 +57,7 @@ model User {
   paymentIntents       PaymentIntent[]
   reviewedRepayments   LoanRepayment[]             @relation("ReviewedBy")
   notifications        Notification[]
+    kycSubmissions       KycSubmission[]
   @@index([phoneNumber])
 }
 
@@ -317,4 +318,30 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([userId, readAt])
+}
+
+enum KycSubmissionStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model KycSubmission {
+  id           String              @id @default(uuid())
+  userId       String
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName     String
+  idNumber     String
+  selfieData   String
+  idFrontData  String
+  idBackData   String
+  status       KycSubmissionStatus @default(PENDING_REVIEW)
+  rejectReason String?
+  reviewedAt   DateTime?
+  reviewedById String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }

@@ -7,6 +7,8 @@ import { writeAudit } from "../services/audit.service";
 import * as defaultSettlement from "../services/defaultSettlement.service";
 import { AppError } from "../middleware/errorHandler";
 
+import * as kycService from "../services/kyc.service";
+
 export const updateSettingsSchema = z.object({
   investAnnualRatePct: z.number().min(0).max(100).optional(),
   loanAnnualRatePct: z.number().min(0).max(100).optional(),
@@ -213,4 +215,46 @@ export async function runAllDefaultSettlements(req: Request, res: Response) {
     ip: req.ip,
   });
   return res.json({ results });
+}
+
+export async function listPendingKyc(_req: Request, res: Response) {
+  return res.json(await kycService.listPendingSubmissions());
+}
+
+export async function getKycSubmission(req: Request, res: Response) {
+  return res.json(await kycService.getSubmissionForAdmin(req.params.id));
+}
+
+export async function approveKycSubmission(req: Request, res: Response) {
+  await kycService.approveSubmission({
+    submissionId: req.params.id,
+    adminId: req.user!.id,
+  });
+  await writeAudit({
+    userId: req.user!.id,
+    action: "KYC_APPROVE",
+    metadata: { submissionId: req.params.id },
+    ip: req.ip,
+  });
+  return res.json({ ok: true });
+}
+
+export const rejectKycSchema = z.object({
+  reason: z.string().max(300).optional(),
+});
+
+export async function rejectKycSubmission(req: Request, res: Response) {
+  const { reason } = req.body as { reason?: string };
+  await kycService.rejectSubmission({
+    submissionId: req.params.id,
+    adminId: req.user!.id,
+    reason,
+  });
+  await writeAudit({
+    userId: req.user!.id,
+    action: "KYC_REJECT",
+    metadata: { submissionId: req.params.id, reason },
+    ip: req.ip,
+  });
+  return res.json({ ok: true });
 }

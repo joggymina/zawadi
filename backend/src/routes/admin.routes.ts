@@ -18,6 +18,11 @@ import {
   runAllDefaultSettlements,
   updateSettingsSchema,
   offerSchema,
+  listPendingKyc,
+  getKycSubmission,
+  approveKycSubmission,
+  rejectKycSubmission,
+  rejectKycSchema,
 } from "../controllers/admin.controller";
 import {
   listAdminPackages,
@@ -46,6 +51,11 @@ router.post("/repayments/:id/reject", asyncHandler(rejectRepayment));
 
 router.get("/users", asyncHandler(listUsers));
 router.patch("/users/:id/kyc", asyncHandler(setUserKyc));
+
+router.get("/kyc/pending", asyncHandler(listPendingKyc));
+router.get("/kyc/:id", asyncHandler(getKycSubmission));
+router.post("/kyc/:id/approve", asyncHandler(approveKycSubmission));
+router.post("/kyc/:id/reject", validateBody(rejectKycSchema), asyncHandler(rejectKycSubmission));
 
 router.get("/packages", asyncHandler(listAdminPackages));
 router.post("/packages", validateBody(packageSchema), asyncHandler(createPackage));

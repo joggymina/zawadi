@@ -137,3 +137,40 @@ export function settleDefault(loanId: string) {
 export function runAllDefaultSettlements() {
   return request<{ results: unknown[] }>("/api/admin/defaults/run", { method: "POST" });
 }
+
+export type PendingKycRow = {
+  id: string;
+  fullName: string;
+  idNumber: string;
+  createdAt: string;
+  user: { id: string; username: string; phoneNumber: string; kycStatus: string };
+};
+
+export function listPendingKyc() {
+  return request<PendingKycRow[]>("/api/admin/kyc/pending");
+}
+
+export function getKycSubmission(id: string) {
+  return request<{
+    id: string;
+    fullName: string;
+    idNumber: string;
+    selfieData: string;
+    idFrontData: string;
+    idBackData: string;
+    status: string;
+    rejectReason: string | null;
+    user: { id: string; username: string; phoneNumber: string; kycStatus: string };
+  }>(`/api/admin/kyc/${id}`);
+}
+
+export function approveKyc(id: string) {
+  return request<{ ok: boolean }>(`/api/admin/kyc/${id}/approve`, { method: "POST" });
+}
+
+export function rejectKyc(id: string, reason?: string) {
+  return request<{ ok: boolean }>(`/api/admin/kyc/${id}/reject`, {
+    method: "POST",
+    body: { reason },
+  });
+}
