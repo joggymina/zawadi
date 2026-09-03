@@ -6,6 +6,14 @@ import { useToast } from "../context/ToastContext";
 
 type KycFilter = "ALL" | "PENDING" | "VERIFIED" | "REJECTED";
 
+const REJECT_PRESETS = [
+  "ID photo unclear or unreadable",
+  "Selfie does not match ID photo",
+  "Name or ID number does not match documents",
+  "Incomplete or cropped ID (corners missing)",
+  "Suspected screenshot or edited image",
+];
+
 export function AdminUsersPage() {
   const showToast = useToast();
   const [users, setUsers] = useState<adminApi.AdminUser[]>([]);
@@ -20,6 +28,10 @@ export function AdminUsersPage() {
     ReturnType<typeof adminApi.getKycSubmission>
   > | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
+
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectOther, setRejectOther] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -51,6 +63,9 @@ export function AdminUsersPage() {
   async function openReview(id: string) {
     setReviewId(id);
     setReview(null);
+    setRejectOpen(false);
+    setRejectReason("");
+    setRejectOther("");
     try {
       setReview(await adminApi.getKycSubmission(id));
     } catch (err) {
@@ -75,14 +90,21 @@ export function AdminUsersPage() {
     }
   }
 
-  async function reject() {
+  async function confirmReject() {
     if (!reviewId) return;
     const reason =
-      window.prompt("Rejection reason (shown to user)", "Documents unclear or mismatch") || "";
+      rejectReason === "OTHER" ? rejectOther.trim() : rejectReason.trim();
+    if (!reason) {
+      showToast("Choose or type a rejection reason");
+      return;
+    }
     setReviewBusy(true);
     try {
-      await adminApi.rejectKyc(reviewId, reason || undefined);
+      await adminApi.rejectKyc(reviewId, reason);
       showToast("KYC rejected");
+      setRejectOpen(false);
+      setRejectReason("");
+      setRejectOther("");
       setReviewId(null);
       setReview(null);
       await load();
@@ -120,6 +142,7 @@ export function AdminUsersPage() {
           onClick={() => {
             setReviewId(null);
             setReview(null);
+            setRejectOpen(false);
           }}
           style={{
             background: "none",
@@ -172,29 +195,112 @@ export function AdminUsersPage() {
                 />
               </div>
             ))}
-            <div style={{ display: "flex", gap: 10 }}>
-              <button
-                className="btn btn-primary"
-                style={{ flex: 1, padding: "12px 0" }}
-                disabled={reviewBusy}
-                onClick={() => void approve()}
-              >
-                Approve
-              </button>
-              <button
-                className="btn"
-                style={{
-                  flex: 1,
-                  padding: "12px 0",
-                  background: "var(--rust-pale)",
-                  color: "var(--rust)",
-                }}
-                disabled={reviewBusy}
-                onClick={() => void reject()}
-              >
-                Reject
-              </button>
-            </div>
+
+            {!rejectOpen ? (
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  className="btn btn-primary"
+                  style={{ flex: 1, padding: "12px 0" }}
+                  disabled={reviewBusy}
+                  onClick={() => void approve()}
+                >
+                  Approve
+                </button>
+                <button
+                  className="btn"
+                  style={{
+                    flex: 1,
+                    padding: "12px 0",
+                    background: "var(--rust-pale)",
+                    color: "var(--rust)",
+                  }}
+                  disabled={reviewBusy}
+                  onClick={() => setRejectOpen(true)}
+                >
+                  Reject
+                </button>
+              </div>
+            ) : (
+              <div className="card" style={{ padding: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                  Rejection reason
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {REJECT_PRESETS.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => {
+                        setRejectReason(r);
+                        setRejectOther("");
+                      }}
+                      style={{
+                        fontSize: 12,
+                        padding: "6px 10px",
+                        borderRadius: 999,
+                        border: "1px solid var(--line)",
+                        background: rejectReason === r ? "var(--rust-pale)" : "#fff",
+                        color: rejectReason === r ? "var(--rust)" : "var(--ink-soft)",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setRejectReason("OTHER")}
+                    style={{
+                      fontSize: 12,
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      border: "1px solid var(--line)",
+                      background: rejectReason === "OTHER" ? "var(--rust-pale)" : "#fff",
+                      color: rejectReason === "OTHER" ? "var(--rust)" : "var(--ink-soft)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Other…
+                  </button>
+                </div>
+                {rejectReason === "OTHER" && (
+                  <input
+                    className="field-input"
+                    style={{ marginTop: 10 }}
+                    placeholder="Type reason shown to user"
+                    value={rejectOther}
+                    onChange={(e) => setRejectOther(e.target.value)}
+                  />
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button
+                    className="btn"
+                    style={{ flex: 1, padding: "10px 0" }}
+                    onClick={() => {
+                      setRejectOpen(false);
+                      setRejectReason("");
+                      setRejectOther("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn"
+                    style={{
+                      flex: 1,
+                      padding: "10px 0",
+                      background: "var(--rust-pale)",
+                      color: "var(--rust)",
+                    }}
+                    disabled={reviewBusy}
+                    onClick={() => void confirmReject()}
+                  >
+                    Confirm reject
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
