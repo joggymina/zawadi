@@ -324,14 +324,21 @@ export function AccountPage() {
               loan.
             </p>
             <p style={{ marginTop: 10 }}>
-              Loans are supported by guarantors, not a formal credit check. Guarantors&apos; pledged
-              coverage can be used if a borrower defaults, to help repay funders. Even with these
-              protections, repayment is not guaranteed in every case—especially if amounts owed
-              exceed what the borrower and guarantors can cover.
+              Loans are supported by guarantors, not a formal credit check. A loan request is only
+              accepted when the chosen guarantors&apos; combined coverage meets the loan amount plus
+              the required security buffer. Under-covered requests are rejected and never open for
+              funding.
+            </p>
+            <p style={{ marginTop: 10 }}>
+              Once a loan is funded, guarantors&apos; pledged coverage stays held until the loan is
+              repaid or cancelled. If the borrower defaults, recovery uses the borrower&apos;s
+              available balance first, then held guarantor coverage, to credit funders. Daily
+              interest and fees can still change what is owed over time, so funders should treat
+              lending as may carrying some residual risk even with these controls.
             </p>
             <p style={{ marginTop: 10 }}>
               Identity documents you upload are used only by the platform for verification and are
-              not shared with other users.
+              not shared.
             </p>
           </div>
         )}
@@ -348,7 +355,11 @@ export function AccountPage() {
             />
             <Faq
               q="How do I qualify for a loan?"
-              a="You need a set number of guarantors who are active investors. Their invested principal, added together, must cover the loan amount plus the required buffer."
+              a="You need a set number of guarantors who are active investors. Their invested principal, added together, must cover the loan amount plus the required security buffer. Under-covered requests are rejected."
+            />
+            <Faq
+              q="Can someone borrow more than guarantors cover?"
+              a="No. A loan request is only accepted when guarantors’ combined coverage meets the loan amount plus the platform security buffer."
             />
             <Faq
               q="What if a loan doesn’t get fully funded?"
