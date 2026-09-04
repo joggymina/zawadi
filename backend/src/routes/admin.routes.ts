@@ -28,6 +28,9 @@ import {
   extendFundingSchema,
   adminFundClosedLoan,
   adminFundSchema,
+  getPlatformAccount,
+  topUpPlatform,
+  platformTopUpSchema,
 } from "../controllers/admin.controller";
 import {
   listAdminPackages,
@@ -83,6 +86,12 @@ router.post(
   "/loans/:id/fund",
   validateBody(adminFundSchema),
   asyncHandler(adminFundClosedLoan),
+);
+router.get("/platform", asyncHandler(getPlatformAccount));
+router.post(
+  "/platform/top-up",
+  validateBody(platformTopUpSchema),
+  asyncHandler(topUpPlatform),
 );
 
 export default router;

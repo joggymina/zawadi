@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { getAdminSettings } from "./adminSettings.service";
 import { assertCanDebitPrincipal } from "./guarantorHold.service";
+import { ensurePlatformUser, debitPlatform, ensurePlatformAccount } from "./platform.service";
 import * as notifications from "./notification.service";
 import { Decimal } from "@prisma/client/runtime/library";
 import { linearInterestDue } from "../utils/money";
@@ -290,9 +291,20 @@ export async function listPendingGuarantees(guarantorId: string) {
   });
 }
 
-export async function fundLoan(params: { loanId: string; funderId: string; amount: number; allowClosedWindow?: boolean }) {
+export async function fundLoan(params: {
+  loanId: string;
+  funderId: string;
+  amount: number;
+  allowClosedWindow?: boolean;
+  /** Debit PlatformAccount instead of the funder's investment principal. */
+  fromPlatform?: boolean;
+}) {
   const amount = new Decimal(params.amount);
-  await assertCanDebitPrincipal(params.funderId, amount);
+  if (!params.fromPlatform) {
+    await assertCanDebitPrincipal(params.funderId, amount);
+  } else {
+    await ensurePlatformAccount();
+  }
 
   const updatedLoan = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT id FROM "Loan" WHERE id = ${params.loanId} FOR UPDATE`;
@@ -311,7 +323,7 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
     ) {
       throw new AppError("Funding window has closed for this loan.", 422);
     }
-    if (loan.borrowerId === params.funderId) {
+    if (!params.fromPlatform && loan.borrowerId === params.funderId) {
       throw new AppError("You can't fund your own loan.", 422);
     }
 
@@ -320,30 +332,34 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
       throw new AppError(`Only ${remaining.toFixed(2)} remains to be funded.`, 422);
     }
 
-    const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
-      where: { userId: params.funderId },
-    });
-    if (funderAccount.principalBalance.lessThan(amount)) {
-      throw new AppError("Insufficient principal balance.", 422);
-    }
+    if (params.fromPlatform) {
+      await debitPlatform(tx as any, amount);
+    } else {
+      const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
+        where: { userId: params.funderId },
+      });
+      if (funderAccount.principalBalance.lessThan(amount)) {
+        throw new AppError("Insufficient principal balance.", 422);
+      }
 
-    await tx.investmentAccount.update({
-      where: { userId: params.funderId },
-      data: { principalBalance: { decrement: amount } },
-    });
-    const afterFunder = await tx.investmentAccount.findUniqueOrThrow({
-      where: { userId: params.funderId },
-    });
-    await tx.transaction.create({
-      data: {
-        userId: params.funderId,
-        type: "LOAN_FUND",
-        amount,
-        balanceAfter: afterFunder.principalBalance.plus(afterFunder.interestBalance),
-        referenceId: loan.id,
-        note: `Funded loan ${loan.id}`,
-      },
-    });
+      await tx.investmentAccount.update({
+        where: { userId: params.funderId },
+        data: { principalBalance: { decrement: amount } },
+      });
+      const afterFunder = await tx.investmentAccount.findUniqueOrThrow({
+        where: { userId: params.funderId },
+      });
+      await tx.transaction.create({
+        data: {
+          userId: params.funderId,
+          type: "LOAN_FUND",
+          amount,
+          balanceAfter: afterFunder.principalBalance.plus(afterFunder.interestBalance),
+          referenceId: loan.id,
+          note: `Funded loan ${loan.id}`,
+        },
+      });
+    }
 
     await tx.loanFunding.create({
       data: { loanId: loan.id, funderId: params.funderId, amount },
@@ -401,13 +417,16 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
       select: { username: true },
     });
     const fullyFunded = updatedLoan.status === "REPAYING";
+    const who = params.fromPlatform
+      ? "the platform"
+      : `@${funder?.username ?? "A funder"}`;
     await notifications.notify({
       userId: updatedLoan.borrowerId,
       type: fullyFunded ? "LOAN_FUNDED" : "LOAN_FUND_PARTIAL",
       title: fullyFunded ? "Loan fully funded" : "Loan received funding",
       body: fullyFunded
-        ? `@${funder?.username ?? "A funder"} completed funding. Funds were disbursed to your account.`
-        : `@${funder?.username ?? "A funder"} funded ${params.amount}. Still open for more funding.`,
+        ? `${who} completed funding. Funds were disbursed to your account.`
+        : `${who} funded ${params.amount}. Still open for more funding.`,
       meta: {
         loanId: updatedLoan.id,
         amount: params.amount,

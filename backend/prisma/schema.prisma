@@ -284,6 +284,18 @@ model AdminSettings {
   updatedAt                 DateTime @updatedAt
 }
 
+// Singleton platform treasury — fees and residual capital live here.
+// Fund closed-window loan remainders from this balance, not an admin user.
+model PlatformAccount {
+  id               String   @id @default("default")
+  principalBalance Decimal  @db.Decimal(18, 2) @default(0)
+  /// Cumulative platform fees / interest share collected (informational)
+  lifetimeInflow   Decimal  @db.Decimal(18, 2) @default(0)
+  lifetimeOutflow  Decimal  @db.Decimal(18, 2) @default(0)
+  updatedAt        DateTime @updatedAt
+}
+
+
 model Offer {
   id          String   @id @default(uuid())
   title       String

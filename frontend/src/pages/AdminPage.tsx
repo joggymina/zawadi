@@ -31,6 +31,12 @@ export function AdminPage() {
   const [fundingClosed, setFundingClosed] = useState<
     Awaited<ReturnType<typeof adminApi.listFundingWindowClosed>>
   >([]);
+  const [platformBal, setPlatformBal] = useState<{
+    principalBalance: string;
+    lifetimeInflow: string;
+    lifetimeOutflow: string;
+  } | null>(null);
+  const [topUpAmt, setTopUpAmt] = useState("");
   /** loanId → which panel is open: null | "extend" | "fund" */
   const [closedPanel, setClosedPanel] = useState<Record<string, "extend" | "fund" | null>>({});
   const [extendHours, setExtendHours] = useState<Record<string, string>>({});
@@ -45,14 +51,16 @@ export function AdminPage() {
     setLoading(true);
     setError("");
     try {
-      const [pendingList, defaultList, closedList] = await Promise.all([
+      const [pendingList, defaultList, closedList, plat] = await Promise.all([
         adminApi.listPendingRepayments(),
         adminApi.listDefaultCandidates(),
         adminApi.listFundingWindowClosed().catch(() => []),
+        adminApi.getPlatformAccount().catch(() => null),
       ]);
       setPending(pendingList);
       setDefaults(defaultList);
       setFundingClosed(closedList);
+      setPlatformBal(plat);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -174,7 +182,7 @@ export function AdminPage() {
     }
     setConfirm({
       title: "Fund this loan?",
-      body: `Fund ${fmt(amount)} toward @${borrower}'s loan from your admin investment balance. Funding window is closed for members; this uses platform/admin capital.`,
+      body: `Fund ${fmt(amount)} toward @${borrower}'s loan from the platform account. When the loan is fully funded, the full loan amount is credited to the borrower.`,
       confirmLabel: "Fund",
       onConfirm: async () => {
         const updated = await adminApi.adminFundClosedLoan(loanId, amount);
@@ -323,6 +331,65 @@ export function AdminPage() {
 
       <section>
         <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
+          Platform account
+        </div>
+        <div className="card" style={{ padding: "12px 14px", marginBottom: 4 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Available balance</div>
+              <div className="mono" style={{ fontSize: 20, fontWeight: 600 }}>
+                {platformBal ? fmt(platformBal.principalBalance) : "—"}
+              </div>
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--ink-soft)", textAlign: "right" }}>
+              <div>Lifetime in: {platformBal ? fmt(platformBal.lifetimeInflow) : "—"}</div>
+              <div>Lifetime out: {platformBal ? fmt(platformBal.lifetimeOutflow) : "—"}</div>
+            </div>
+          </div>
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              className="field-input mono"
+              type="number"
+              min={0}
+              step="0.01"
+              placeholder="Top-up amount"
+              value={topUpAmt}
+              onChange={(e) => setTopUpAmt(e.target.value)}
+              style={{ width: 140, padding: "8px 10px", fontSize: 13 }}
+            />
+            <button
+              className="btn btn-outline"
+              style={{ padding: "8px 12px", fontSize: 12.5 }}
+              onClick={() => {
+                const amt = parseFloat(topUpAmt);
+                if (Number.isNaN(amt) || amt <= 0) {
+                  showToast("Enter a valid top-up amount");
+                  return;
+                }
+                setConfirm({
+                  title: "Top up platform account?",
+                  body: `Add ${fmt(amt)} to the platform treasury. Use this for residual funding of closed-window loans.`,
+                  confirmLabel: "Top up",
+                  onConfirm: async () => {
+                    await adminApi.topUpPlatform(amt);
+                    showToast(`Platform topped up by ${fmt(amt)}`);
+                    setTopUpAmt("");
+                    await load();
+                  },
+                });
+              }}
+            >
+              Top up
+            </button>
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 8 }}>
+            Closed-window residual funding draws from this balance — not an admin personal account. Graphs and fee breakdown come later.
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
           Funding window closed
         </div>
         {fundingClosed.length === 0 ? (
@@ -443,7 +510,7 @@ export function AdminPage() {
                       }}
                     >
                       <div style={{ fontSize: 12.5, fontWeight: 500, marginBottom: 8 }}>
-                        Fund from admin balance (max {fmt(remaining)})
+                        Fund from platform account (max {fmt(remaining)})
                       </div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                         <input

@@ -5,6 +5,7 @@ import { getAdminSettings, updateAdminSettings } from "../services/adminSettings
 import * as loanService from "../services/loan.service";
 import { writeAudit } from "../services/audit.service";
 import * as defaultSettlement from "../services/defaultSettlement.service";
+import * as platformService from "../services/platform.service";
 import { AppError } from "../middleware/errorHandler";
 
 import * as kycService from "../services/kyc.service";
@@ -328,23 +329,58 @@ export async function adminFundClosedLoan(req: Request, res: Response) {
   if (!loan) throw new AppError("Loan not found.", 404);
   if (loan.status !== "OPEN") throw new AppError("Loan is not open for funding.", 422);
 
+  // Residual funding comes from platform treasury, not the admin's personal balance.
+  const platformUser = await platformService.ensurePlatformUser();
   const updated = await loanService.fundLoan({
     loanId: req.params.id,
-    funderId: req.user!.id,
+    funderId: platformUser.id,
     amount,
     allowClosedWindow: true,
+    fromPlatform: true,
   });
 
   await writeAudit({
     userId: req.user!.id,
-    action: "ADMIN_FUND_CLOSED_LOAN",
+    action: "ADMIN_FUND_CLOSED_LOAN_PLATFORM",
     metadata: {
       loanId: updated.id,
       amount,
       status: updated.status,
       fundedAmount: String(updated.fundedAmount),
+      source: "platform",
     },
     ip: req.ip,
   });
   return res.json(updated);
+}
+
+export async function getPlatformAccount(_req: Request, res: Response) {
+  const summary = await platformService.getPlatformSummary();
+  return res.json({
+    principalBalance: summary.principalBalance,
+    lifetimeInflow: summary.lifetimeInflow,
+    lifetimeOutflow: summary.lifetimeOutflow,
+    updatedAt: summary.updatedAt,
+  });
+}
+
+export const platformTopUpSchema = z.object({
+  amount: z.number().positive().max(100_000_000),
+});
+
+/** Manual top-up of platform treasury (ops / testing). Later: fee accruals auto-credit. */
+export async function topUpPlatform(req: Request, res: Response) {
+  const { amount } = req.body as { amount: number };
+  const updated = await platformService.creditPlatform(amount, "Admin top-up");
+  await writeAudit({
+    userId: req.user!.id,
+    action: "PLATFORM_TOPUP",
+    metadata: { amount },
+    ip: req.ip,
+  });
+  return res.json({
+    principalBalance: updated.principalBalance,
+    lifetimeInflow: updated.lifetimeInflow,
+    lifetimeOutflow: updated.lifetimeOutflow,
+  });
 }

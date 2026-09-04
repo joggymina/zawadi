@@ -208,3 +208,21 @@ export function adminFundClosedLoan(loanId: string, amount: number) {
     amount: string;
   }>(`/api/admin/loans/${loanId}/fund`, { method: "POST", body: { amount } });
 }
+
+
+export function getPlatformAccount() {
+  return request<{
+    principalBalance: string;
+    lifetimeInflow: string;
+    lifetimeOutflow: string;
+    updatedAt: string;
+  }>("/api/admin/platform");
+}
+
+export function topUpPlatform(amount: number) {
+  return request<{
+    principalBalance: string;
+    lifetimeInflow: string;
+    lifetimeOutflow: string;
+  }>("/api/admin/platform/top-up", { method: "POST", body: { amount } });
+}
