@@ -81,24 +81,22 @@ export async function listMine(req: Request, res: Response) {
     orderBy: { createdAt: "desc" },
   });
 
-  // Attach the same totalDue repayLoan will enforce, so the UI amount matches submit.
-  const now = new Date();
+  // totalDue from stored balances only (matches /repay exactly).
   const enriched = loans.map((loan) => {
     if (loan.status !== "REPAYING" && loan.status !== "DEFAULTED") {
       return {
         ...loan,
         totalDue: null as string | null,
+        amountDueNow: null as string | null,
       };
     }
-    const due = computeLoanOutstanding(loan, now);
+    const due = computeLoanOutstanding(loan);
     const pending = (loan.repayments ?? [])
       .filter((r) => r.status === "PENDING")
       .reduce((s, r) => s + Number(r.amount), 0);
     const totalDueNum = Math.max(0, Number(due.totalDue) - pending);
     return {
       ...loan,
-      // Present current interest due so principal + interest matches totalDue.
-      interestOwed: due.interestDue,
       totalDue: due.totalDue.toFixed(2),
       amountDueNow: totalDueNum.toFixed(2),
     };

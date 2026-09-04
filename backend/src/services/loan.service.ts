@@ -49,32 +49,22 @@ function applyEarlyRepayInterestCap(params: {
   return { interestOwed: params.interestOwed, capped: false };
 }
 
-/** Same outstanding the repay endpoint uses — UI must show this total. */
+/**
+ * Outstanding = stored principalOwed + interestOwed only.
+ * Interest is raised only by the hourly accrual job — never recomputed on read/repay,
+ * so the amount shown in the app always matches what /repay accepts.
+ */
 export function computeLoanOutstanding(loan: {
-  amount: Decimal | { toString(): string };
   principalOwed: Decimal | { toString(): string };
   interestOwed: Decimal | { toString(): string };
-  interestRateApr: Decimal | { toString(): string };
-  disbursedAt: Date | null;
-  package?: { durationHours: number } | null;
-}, now = new Date()) {
-  const principalOwed = new Decimal(loan.principalOwed.toString());
-  const durationHours = loan.package?.durationHours ?? 24 * 7;
-  const capped = applyEarlyRepayInterestCap({
-    principal: new Decimal(loan.amount.toString()),
-    interestOwed: new Decimal(loan.interestOwed.toString()),
-    ratePct: loan.interestRateApr,
-    durationHours,
-    disbursedAt: loan.disbursedAt,
-    now,
-  });
-  const interestDue = capped.interestOwed;
-  const totalDue = principalOwed.plus(interestDue).toDecimalPlaces(2);
+}) {
+  const principalDue = new Decimal(loan.principalOwed.toString()).toDecimalPlaces(2);
+  const interestDue = new Decimal(loan.interestOwed.toString()).toDecimalPlaces(2);
   return {
-    principalDue: principalOwed.toDecimalPlaces(2),
-    interestDue: interestDue.toDecimalPlaces(2),
-    totalDue,
-    interestChanged: !interestDue.eq(new Decimal(loan.interestOwed.toString())),
+    principalDue,
+    interestDue,
+    totalDue: principalDue.plus(interestDue).toDecimalPlaces(2),
+    interestChanged: false,
   };
 }
 
@@ -487,10 +477,9 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     if (loan.borrowerId !== params.borrowerId) throw new AppError("This isn't your loan.", 403);
     if (loan.status !== "REPAYING") throw new AppError("This loan isn't awaiting repayment.", 422);
 
-    // Interest due uses the same formula as list/mine totalDue (see computeLoanOutstanding).
-    const due = computeLoanOutstanding(loan, now);
-    let interestOwed = due.interestDue;
-    let lastAccrualAt = now;
+    // Use stored balances only — same numbers the UI shows from listMine.
+    const due = computeLoanOutstanding(loan);
+    const interestOwed = due.interestDue;
 
     const pending = await tx.loanRepayment.findMany({
       where: { loanId: loan.id, status: "PENDING" },
@@ -509,13 +498,12 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     }
 
     let payAmount = amount.toDecimalPlaces(2);
-    // Allow 0.05 rounding tolerance only so UI cents match server cents — not a write-off.
     if (payAmount.greaterThan(outstanding)) {
       if (payAmount.minus(outstanding).lessThanOrEqualTo(0.05)) {
         payAmount = outstanding;
       } else {
         throw new AppError(
-          `Total amount due right now is ${outstanding.toFixed(2)} (principal ${due.principalDue.toFixed(2)} + interest ${due.interestDue.toFixed(2)}).`,
+          `Total amount due is ${outstanding.toFixed(2)} (principal ${due.principalDue.toFixed(2)} + interest ${due.interestDue.toFixed(2)}).`,
           422,
         );
       }
@@ -550,15 +538,8 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       },
     });
 
-    // Snapshot interest at submit time, but do NOT reduce principalOwed /
-    // interestOwed until approval. Outstanding stays the full total due.
-    await tx.loan.update({
-      where: { id: loan.id },
-      data: {
-        interestOwed,
-        lastAccrualAt: lastAccrualAt ?? loan.lastAccrualAt,
-      },
-    });
+    // Do not change principalOwed / interestOwed until approval.
+    // Interest only moves on the hourly accrual job.
 
     const repayment = await tx.loanRepayment.create({
       data: {
