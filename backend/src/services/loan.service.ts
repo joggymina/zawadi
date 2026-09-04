@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { getAdminSettings } from "./adminSettings.service";
 import { assertCanDebitPrincipal } from "./guarantorHold.service";
-import { ensurePlatformUser, debitPlatform, ensurePlatformAccount } from "./platform.service";
+import { ensurePlatformUser, debitPlatform, ensurePlatformAccount, creditPlatformTx, getPlatformUserId, PLATFORM_USERNAME } from "./platform.service";
 import * as notifications from "./notification.service";
 import { Decimal } from "@prisma/client/runtime/library";
 import { linearInterestDue } from "../utils/money";
@@ -471,9 +471,19 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     let interestOwed = capped.interestOwed;
     let lastAccrualAt = now;
 
-    const outstanding = loan.principalOwed.plus(interestOwed);
+    // Pending repayments already reserved cash from the borrower; don't let
+    // another repayment over-claim the same outstanding.
+    const pending = await tx.loanRepayment.findMany({
+      where: { loanId: loan.id, status: "PENDING" },
+      select: { amount: true },
+    });
+    const pendingTotal = pending.reduce((s, p) => s.plus(p.amount), new Decimal(0));
+    const outstanding = loan.principalOwed.plus(interestOwed).minus(pendingTotal);
+    if (outstanding.lessThanOrEqualTo(0)) {
+      throw new AppError("A repayment is already awaiting approval for the full balance.", 422);
+    }
     if (amount.greaterThan(outstanding)) {
-      throw new AppError(`Outstanding balance is only ${outstanding.toFixed(2)}.`, 422);
+      throw new AppError(`Outstanding balance (after pending) is only ${outstanding.toFixed(2)}.`, 422);
     }
 
     await assertCanDebitPrincipal(params.borrowerId, amount);
@@ -503,14 +513,13 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       },
     });
 
-    const towardInterest = Decimal.min(amount, interestOwed);
-    const towardPrincipal = amount.minus(towardInterest);
-
+    // Snapshot interest at submit time, but do NOT reduce principalOwed /
+    // interestOwed until approval. That keeps the UI outstanding correct
+    // while a repayment is "Awaiting approval".
     await tx.loan.update({
       where: { id: loan.id },
       data: {
-        principalOwed: loan.principalOwed.minus(towardPrincipal),
-        interestOwed: interestOwed.minus(towardInterest),
+        interestOwed,
         lastAccrualAt: lastAccrualAt ?? loan.lastAccrualAt,
       },
     });
@@ -554,58 +563,79 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
     );
     const denom = totalFunded.greaterThan(0) ? totalFunded : repayment.loan.amount;
 
+    const platformUserId = await getPlatformUserId();
+    let platformFees = new Decimal(0);
+
     for (const f of repayment.loan.fundings) {
       const weight = f.amount.div(denom);
       const dPrincipal = principalPart.mul(weight).toDecimalPlaces(2);
       const dInterest = interestPart.mul(weight).toDecimalPlaces(2);
       const fee = dInterest.mul(sharePct).toDecimalPlaces(2);
       const credit = dPrincipal.plus(dInterest).minus(fee);
-      if (credit.lessThanOrEqualTo(0)) continue;
+      platformFees = platformFees.plus(fee);
 
-      const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
-        where: { userId: f.funderId },
-      });
-      await tx.investmentAccount.update({
-        where: { userId: f.funderId },
-        data: { principalBalance: { increment: credit } },
-      });
-      await tx.transaction.create({
-        data: {
-          userId: f.funderId,
-          type: "LOAN_RETURN",
-          amount: credit,
-          balanceAfter: funderAccount.principalBalance
-            .plus(credit)
-            .plus(funderAccount.interestBalance),
-          referenceId: repayment.loanId,
-          note: `Return from loan ${repayment.loanId} (platform fee on interest ${fee.toFixed(2)})`,
-        },
-      });
-      await tx.loanRepaymentDistribution.create({
-        data: {
-          repaymentId: repayment.id,
-          funderId: f.funderId,
-          amount: credit,
-        },
-      });
+      if (credit.greaterThan(0)) {
+        if (f.funderId === platformUserId) {
+          // Platform residual funding returns to the treasury, not the system user wallet.
+          await creditPlatformTx(tx, credit);
+        } else {
+          const funderAccount = await tx.investmentAccount.findUniqueOrThrow({
+            where: { userId: f.funderId },
+          });
+          await tx.investmentAccount.update({
+            where: { userId: f.funderId },
+            data: { principalBalance: { increment: credit } },
+          });
+          await tx.transaction.create({
+            data: {
+              userId: f.funderId,
+              type: "LOAN_RETURN",
+              amount: credit,
+              balanceAfter: funderAccount.principalBalance
+                .plus(credit)
+                .plus(funderAccount.interestBalance),
+              referenceId: repayment.loanId,
+              note: `Return from loan ${repayment.loanId} (platform fee on interest ${fee.toFixed(2)})`,
+            },
+          });
+        }
+
+        await tx.loanRepaymentDistribution.create({
+          data: {
+            repaymentId: repayment.id,
+            funderId: f.funderId,
+            amount: credit,
+          },
+        });
+      }
+    }
+
+    // Interest share always accrues to platform treasury.
+    if (platformFees.greaterThan(0)) {
+      await creditPlatformTx(tx, platformFees);
     }
 
     const loan = repayment.loan;
-    const newPrincipal = loan.principalOwed;
-    const newInterest = loan.interestOwed;
+    // Owed was not reduced at repay-submit time — reduce now on approval.
+    const newPrincipal = Decimal.max(
+      0,
+      loan.principalOwed.minus(principalPart),
+    ).toDecimalPlaces(2);
+    const newInterest = Decimal.max(
+      0,
+      loan.interestOwed.minus(interestPart),
+    ).toDecimalPlaces(2);
     const fullyRepaid =
       newPrincipal.lessThanOrEqualTo(0.01) && newInterest.lessThanOrEqualTo(0.01);
 
-    if (fullyRepaid) {
-      await tx.loan.update({
-        where: { id: loan.id },
-        data: {
-          principalOwed: new Decimal(0),
-          interestOwed: new Decimal(0),
-          status: "REPAID",
-        },
-      });
-    }
+    await tx.loan.update({
+      where: { id: loan.id },
+      data: {
+        principalOwed: fullyRepaid ? new Decimal(0) : newPrincipal,
+        interestOwed: fullyRepaid ? new Decimal(0) : newInterest,
+        status: fullyRepaid ? "REPAID" : "REPAYING",
+      },
+    });
 
     return tx.loanRepayment.update({
       where: { id: repayment.id },
@@ -635,7 +665,9 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
           meta: { loanId: full.loanId, repaymentId: full.id },
         },
       ];
+      const platformId = await getPlatformUserId();
       for (const f of full.loan.fundings) {
+        if (f.funderId === platformId) continue;
         inputs.push({
           userId: f.funderId,
           type: "REPAYMENT_DISTRIBUTED",

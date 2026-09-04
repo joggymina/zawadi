@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma";
 import { AppError } from "../middleware/errorHandler";
 import { Decimal } from "@prisma/client/runtime/library";
 
-const PLATFORM_USERNAME = "__platform__";
+export const PLATFORM_USERNAME = "__platform__";
 
 export async function ensurePlatformAccount() {
   return prisma.platformAccount.upsert({
@@ -22,7 +22,6 @@ export async function ensurePlatformUser() {
   const existing = await prisma.user.findUnique({ where: { username: PLATFORM_USERNAME } });
   if (existing) return existing;
 
-  // Minimal user row — never used for login. Password is a random unusable hash placeholder.
   return prisma.user.create({
     data: {
       username: PLATFORM_USERNAME,
@@ -35,6 +34,11 @@ export async function ensurePlatformUser() {
   });
 }
 
+export async function getPlatformUserId(): Promise<string> {
+  const u = await ensurePlatformUser();
+  return u.id;
+}
+
 export async function getPlatformSummary() {
   const acct = await ensurePlatformAccount();
   return {
@@ -45,8 +49,8 @@ export async function getPlatformSummary() {
   };
 }
 
-/** Credit platform (e.g. fee collection, top-up). */
-export async function creditPlatform(amount: Decimal | number, note?: string) {
+/** Credit platform (top-up, repayment return, fees). */
+export async function creditPlatform(amount: Decimal | number, _note?: string) {
   const amt = new Decimal(amount);
   if (amt.lessThanOrEqualTo(0)) throw new AppError("Amount must be positive.", 422);
   await ensurePlatformAccount();
@@ -59,8 +63,26 @@ export async function creditPlatform(amount: Decimal | number, note?: string) {
   });
 }
 
-/** Debit platform for residual loan funding. Throws if insufficient. */
-export async function debitPlatform(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], amount: Decimal) {
+/** Credit inside an existing transaction. */
+export async function creditPlatformTx(tx: any, amount: Decimal) {
+  if (amount.lessThanOrEqualTo(0)) return null;
+  await tx.platformAccount.upsert({
+    where: { id: "default" },
+    create: {
+      id: "default",
+      principalBalance: amount,
+      lifetimeInflow: amount,
+      lifetimeOutflow: new Decimal(0),
+    },
+    update: {
+      principalBalance: { increment: amount },
+      lifetimeInflow: { increment: amount },
+    },
+  });
+}
+
+/** Debit platform for residual loan funding. */
+export async function debitPlatform(tx: any, amount: Decimal) {
   const acct = await tx.platformAccount.findUnique({ where: { id: "default" } });
   if (!acct) throw new AppError("Platform account not initialized.", 500);
   if (acct.principalBalance.lessThan(amount)) {

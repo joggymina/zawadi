@@ -133,7 +133,10 @@ export async function listUsers(req: Request, res: Response) {
   }
 
   const users = await prisma.user.findMany({
-    where,
+    where: {
+      ...where,
+      username: { not: "__platform__" },
+    },
     select: {
       id: true,
       username: true,

@@ -12,6 +12,11 @@ import { NewLoanModal } from "../components/NewLoanModal";
 
 type SubTab = "marketplace" | "funded" | "mine" | "guarantees";
 
+function funderLabel(username?: string | null) {
+  if (!username || username === "__platform__") return "Platform";
+  return `@${username}`;
+}
+
 function statusMeta(status: Loan["status"] | string) {
   if (status === "PENDING_GUARANTORS") {
     return { label: "Waiting on guarantors", bg: "var(--amber-pale)", fg: "#7a5a2e" };
@@ -450,7 +455,12 @@ export function LoansPage() {
               </div>
             ) : (
               myLoans.map((l) => {
-                const outstanding = Number(l.principalOwed) + Number(l.interestOwed);
+                const pendingRepay = (l.repayments ?? [])
+                  .filter((r) => r.status === "PENDING")
+                  .reduce((s, r) => s + Number(r.amount), 0);
+                const booked = Number(l.principalOwed) + Number(l.interestOwed);
+                // Show remaining after pending holds so the card matches what you can still repay.
+                const outstanding = Math.max(0, booked - pendingRepay);
                 const meta = statusMeta(l.status);
                 return (
                   <div key={l.id} className="card" style={{ padding: "14px 16px" }}>
@@ -490,7 +500,7 @@ export function LoansPage() {
                       <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
                         Funded by{" "}
                         {l.fundings!
-                          .map((f) => `@${f.funder?.username ?? "?"} ${fmt(f.amount)}`)
+                          .map((f) => `${funderLabel(f.funder?.username)} ${fmt(f.amount)}`)
                           .join(" · ")}
                       </div>
                     )}
@@ -511,6 +521,9 @@ export function LoansPage() {
                         </div>
                         <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
                           Principal {fmt(l.principalOwed)} + interest {fmt(l.interestOwed)}
+                          {pendingRepay > 0
+                            ? ` · ${fmt(pendingRepay)} awaiting approval`
+                            : ""}
                         </div>
                         {l.status === "DEFAULTED" && (
                           <div style={{ fontSize: 11.5, color: "var(--rust)", marginTop: 6 }}>
@@ -602,9 +615,15 @@ export function LoansPage() {
       {repayModal && (
         <AmountModal
           title="Repay loan"
-          balanceLabel={`Outstanding: ${fmt(
-            Number(repayModal.principalOwed) + Number(repayModal.interestOwed),
-          )} (principal ${fmt(repayModal.principalOwed)} + interest ${fmt(repayModal.interestOwed)})`}
+          balanceLabel={(() => {
+            const pending = (repayModal.repayments ?? [])
+              .filter((r) => r.status === "PENDING")
+              .reduce((s, r) => s + Number(r.amount), 0);
+            const booked =
+              Number(repayModal.principalOwed) + Number(repayModal.interestOwed);
+            const left = Math.max(0, booked - pending);
+            return `Outstanding: ${fmt(left)} (principal ${fmt(repayModal.principalOwed)} + interest ${fmt(repayModal.interestOwed)}${pending > 0 ? ` − ${fmt(pending)} pending` : ""})`;
+          })()}
           confirmLabel="Repay"
           needsConfirm
           confirmHint="Repayment is held awaiting approval."

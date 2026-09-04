@@ -383,7 +383,7 @@ export function AdminPage() {
             </button>
           </div>
           <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 8 }}>
-            Closed-window residual funding draws from this balance — not an admin personal account. Graphs and fee breakdown come later.
+            Single platform treasury: residual funding, repayment returns, and interest fees all flow here. The system user is hidden from Users & KYC.
           </div>
         </div>
       </section>
