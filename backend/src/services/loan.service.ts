@@ -4,57 +4,46 @@ import { getAdminSettings } from "./adminSettings.service";
 import { assertCanDebitPrincipal } from "./guarantorHold.service";
 import * as notifications from "./notification.service";
 import { Decimal } from "@prisma/client/runtime/library";
+import { linearInterestDue } from "../utils/money";
 
 const DAY_MS = 86_400_000;
 
-function elapsedDays(from: Date, to: Date): number {
-  return Math.max(0, (to.getTime() - from.getTime()) / DAY_MS);
+function elapsedHoursBetween(from: Date, to: Date): number {
+  return Math.max(0, (to.getTime() - from.getTime()) / (60 * 60 * 1000));
 }
 
-function simpleInterest(principal: Decimal, aprPct: Decimal | number, days: number): Decimal {
-  if (days <= 0) return new Decimal(0);
-  const p = Number(principal);
-  if (p <= 0) return new Decimal(0);
-  const r = Number(aprPct) / 100;
-  return new Decimal((p * r * (days / 365)).toFixed(2));
-}
-
-async function matchingPackageRate(elapsedHours: number): Promise<Decimal | null> {
-  const packages = await prisma.loanPackage.findMany({ orderBy: { durationHours: "asc" } });
-  if (packages.length === 0) return null;
-  const match =
-    packages.find((p) => p.durationHours >= elapsedHours) ?? packages[packages.length - 1];
-  return match.interestRateApr;
-}
-
-async function applyEarlyRepayInterestCap(params: {
+/**
+ * Flat term interest: full term = principal × packageRate%.
+ * Early repay charges only the time-proportional share
+ * (elapsedHours / durationHours), capped at full term interest.
+ * Field `interestRateApr` is the term rate (% of amount), not annual.
+ */
+function applyEarlyRepayInterestCap(params: {
   principal: Decimal;
   interestOwed: Decimal;
+  ratePct: Decimal | number;
+  durationHours: number;
   disbursedAt: Date | null;
   now: Date;
 }) {
   if (!params.disbursedAt) {
-    return { interestOwed: params.interestOwed, capped: false, matchApr: null as number | null };
+    return { interestOwed: params.interestOwed, capped: false };
   }
-  const hours = (params.now.getTime() - params.disbursedAt.getTime()) / (60 * 60 * 1000);
-  const days = elapsedDays(params.disbursedAt, params.now);
-  const matchApr = await matchingPackageRate(hours);
-  if (matchApr === null) {
-    return { interestOwed: params.interestOwed, capped: false, matchApr: null };
+  const hours = elapsedHoursBetween(params.disbursedAt, params.now);
+  const due = linearInterestDue({
+    principal: params.principal,
+    ratePct: params.ratePct,
+    durationHours: params.durationHours > 0 ? params.durationHours : 24,
+    elapsedHours: hours,
+  });
+  if (params.interestOwed.greaterThan(due)) {
+    return { interestOwed: due, capped: true };
   }
-  const maxInterest = simpleInterest(params.principal, matchApr, days);
-  if (params.interestOwed.greaterThan(maxInterest)) {
-    return {
-      interestOwed: maxInterest,
-      capped: true,
-      matchApr: Number(matchApr),
-    };
+  // Catch up accrual lag (e.g. short package before first daily job).
+  if (params.interestOwed.lessThan(due)) {
+    return { interestOwed: due, capped: false };
   }
-  return {
-    interestOwed: params.interestOwed,
-    capped: false,
-    matchApr: Number(matchApr),
-  };
+  return { interestOwed: params.interestOwed, capped: false };
 }
 
 export async function createLoanRequest(params: {
@@ -421,31 +410,26 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
 
     const loan = await tx.loan.findUnique({
       where: { id: params.loanId },
-      include: { fundings: true },
+      include: { fundings: true, package: true },
     });
     if (!loan) throw new AppError("Loan not found.", 404);
     if (loan.borrowerId !== params.borrowerId) throw new AppError("This isn't your loan.", 403);
     if (loan.status !== "REPAYING") throw new AppError("This loan isn't awaiting repayment.", 422);
 
-    let interestOwed = loan.interestOwed;
-    let lastAccrualAt = loan.lastAccrualAt;
-    if (lastAccrualAt && loan.principalOwed.greaterThan(0)) {
-      const days = elapsedDays(lastAccrualAt, now);
-      if (days > 0) {
-        interestOwed = interestOwed.plus(
-          simpleInterest(loan.principalOwed, loan.interestRateApr, days),
-        );
-        lastAccrualAt = now;
-      }
-    }
-
-    const capped = await applyEarlyRepayInterestCap({
-      principal: loan.principalOwed,
-      interestOwed,
+    // Bring interest to time-proportional term amount (early = less, full term = amount × rate%).
+    const durationHours = loan.package?.durationHours ?? 24 * 7;
+    // Use original loan amount so partial principal payments don't shrink the term fee base mid-way.
+    const interestPrincipal = loan.amount;
+    const capped = applyEarlyRepayInterestCap({
+      principal: interestPrincipal,
+      interestOwed: loan.interestOwed,
+      ratePct: loan.interestRateApr,
+      durationHours,
       disbursedAt: loan.disbursedAt,
       now,
     });
-    interestOwed = capped.interestOwed;
+    let interestOwed = capped.interestOwed;
+    let lastAccrualAt = now;
 
     const outstanding = loan.principalOwed.plus(interestOwed);
     if (amount.greaterThan(outstanding)) {

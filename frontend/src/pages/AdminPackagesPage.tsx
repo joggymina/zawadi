@@ -116,7 +116,7 @@ export function AdminPackagesPage() {
     }
     askConfirm({
       title: "Update this package rate?",
-      body: `Set “${p.name}” only to ${rate.toFixed(2)}% p.a.?\n\nOther packages are unchanged. Only new loans under this package use the new rate.`,
+      body: `Set “${p.name}” only to ${rate.toFixed(2)}% of amount?\n\nOther packages are unchanged. Only new loans under this package use the new rate.`,
       confirmLabel: "Save this package",
       onConfirm: async () => {
         const updated = await adminApi.updatePackage(p.id, {
@@ -131,7 +131,7 @@ export function AdminPackagesPage() {
           setDraftsFromList(next);
           return next;
         });
-        showToast(`Saved ${p.name}: ${rate.toFixed(2)}% p.a.`);
+        showToast(`Saved ${p.name}: ${rate.toFixed(2)}% of amount`);
       },
     });
   }
@@ -145,14 +145,14 @@ export function AdminPackagesPage() {
     }
     askConfirm({
       title: "Update all package rates?",
-      body: `Set every loan package to ${rate.toFixed(2)}% p.a.?\n\nTriggered from “${sourceName}”. Only new loans use the new rate.`,
+      body: `Set every loan package to ${rate.toFixed(2)}% of amount?\n\nTriggered from “${sourceName}”. Only new loans use the new rate.`,
       confirmLabel: "Save all rates",
       onConfirm: async () => {
         const res = await adminApi.bulkSetPackageRates(rate);
         const sorted = sortPackages(res.packages);
         setPackages(sorted);
         setDraftsFromList(sorted);
-        showToast(`All packages set to ${rate.toFixed(2)}% p.a. (${res.count} updated)`);
+        showToast(`All packages set to ${rate.toFixed(2)}% of amount (${res.count} updated)`);
       },
     });
   }
@@ -161,14 +161,14 @@ export function AdminPackagesPage() {
     const rate = defaultLoanRate;
     askConfirm({
       title: "Reset all package rates?",
-      body: `Set every package to the default loan rate of ${rate.toFixed(2)}% p.a.?`,
+      body: `Set every package to the default loan rate of ${rate.toFixed(2)}% of amount?`,
       confirmLabel: "Reset to default",
       onConfirm: async () => {
         const res = await adminApi.bulkSetPackageRates(rate);
         const sorted = sortPackages(res.packages);
         setPackages(sorted);
         setDraftsFromList(sorted);
-        showToast(`All packages reset to ${rate.toFixed(2)}% p.a.`);
+        showToast(`All packages reset to ${rate.toFixed(2)}% of amount`);
       },
     });
   }
@@ -189,7 +189,7 @@ export function AdminPackagesPage() {
   function requestActivate(p: LoanPackage) {
     askConfirm({
       title: "Activate package?",
-      body: `“${p.name}” will be available again at ${Number(p.interestRateApr ?? 0).toFixed(2)}% p.a.`,
+      body: `“${p.name}” will be available again at ${Number(p.interestRateApr ?? 0).toFixed(2)}% of amount`,
       confirmLabel: "Activate",
       onConfirm: async () => {
         const updated = await adminApi.activatePackage(p.id);
@@ -213,7 +213,7 @@ export function AdminPackagesPage() {
     }
     askConfirm({
       title: "Add package?",
-      body: `Create “${newPkg.name.trim()}” (${formatDuration(durationHours)}) at ${interestRateApr.toFixed(2)}% p.a.?`,
+      body: `Create “${newPkg.name.trim()}” (${formatDuration(durationHours)}) at ${interestRateApr.toFixed(2)}% of amount?`,
       confirmLabel: "Add package",
       onConfirm: async () => {
         const pkg = await adminApi.createPackage({
@@ -235,7 +235,7 @@ export function AdminPackagesPage() {
           graceHours: "24",
           interestRateApr: String(defaultLoanRate || 33),
         });
-        showToast(`Added ${pkg.name} at ${interestRateApr.toFixed(2)}% p.a.`);
+        showToast(`Added ${pkg.name} at ${interestRateApr.toFixed(2)}% of amount`);
       },
     });
   }
@@ -301,7 +301,7 @@ export function AdminPackagesPage() {
       <div style={{ fontSize: 12.5, color: "var(--ink-soft)", lineHeight: 1.45 }}>
         Sorted by duration. <strong>Save rate</strong> updates one package;{" "}
         <strong>Apply to all</strong> sets every package to that value. Default rate:{" "}
-        <strong>{defaultLoanRate.toFixed(2)}% p.a.</strong>
+        <strong>{defaultLoanRate.toFixed(2)}% of amount</strong>
       </div>
 
       {packages.length > 0 && !ratesInSync && (
@@ -316,7 +316,7 @@ export function AdminPackagesPage() {
             lineHeight: 1.45,
           }}
         >
-          <strong>Packages use different APRs</strong> ({uniqueRates.map((r) => `${r}%`).join(", ")}
+          <strong>Packages use different rates</strong> ({uniqueRates.map((r) => `${r}%`).join(", ")}
           ). That is allowed. Use <strong>Apply to all</strong> or <strong>Reset to default</strong>{" "}
           if you want them aligned.
         </div>
@@ -332,7 +332,7 @@ export function AdminPackagesPage() {
             color: "var(--green-deep)",
           }}
         >
-          All packages at {defaultLoanRate.toFixed(2)}% p.a. (matches default).
+          All packages at {defaultLoanRate.toFixed(2)}% of amount (matches default).
         </div>
       )}
 
@@ -347,8 +347,8 @@ export function AdminPackagesPage() {
             color: "#7a5a2e",
           }}
         >
-          All packages at {Number(syncedRate).toFixed(2)}% p.a.; default is{" "}
-          {defaultLoanRate.toFixed(2)}% p.a.
+          All packages at {Number(syncedRate).toFixed(2)}% of amount; default is{" "}
+          {defaultLoanRate.toFixed(2)}% of amount
         </div>
       )}
 
@@ -386,7 +386,7 @@ export function AdminPackagesPage() {
                   {formatDuration(p.durationHours)}
                   {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""}
                   {" · "}
-                  {Number(p.interestRateApr ?? 0).toFixed(2)}% p.a.
+                  {Number(p.interestRateApr ?? 0).toFixed(2)}% of amount
                 </div>
 
                 <div
@@ -410,7 +410,7 @@ export function AdminPackagesPage() {
                     }
                     style={{ width: 96, padding: "7px 8px", fontSize: 13 }}
                   />
-                  <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>% p.a.</span>
+                  <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>% of amount</span>
                   <button
                     className="btn btn-outline"
                     style={{ padding: "6px 12px", fontSize: 12 }}

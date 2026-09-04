@@ -14,22 +14,10 @@ interface NewLoanModalProps {
   }) => Promise<unknown>;
 }
 
-/** Match backend utils/money.ts annualToDaily */
-function annualToDaily(annualPct: number): number {
-  const a = annualPct / 100;
-  return Math.pow(1 + a, 1 / 365) - 1;
-}
-
-/**
- * Expected interest if the full principal stays outstanding for the
- * package term (compound daily — same idea as dailyAccrual.job).
- */
-function estimateInterest(principal: number, aprPct: number, durationHours: number): number {
-  if (principal <= 0 || durationHours <= 0) return 0;
-  const days = durationHours / 24;
-  const daily = annualToDaily(aprPct);
-  const interest = principal * (Math.pow(1 + daily, days) - 1);
-  return Math.round(interest * 100) / 100;
+/** Full term interest = principal × package rate % (flat, not annual). */
+function termInterest(principal: number, ratePct: number): number {
+  if (principal <= 0 || ratePct <= 0) return 0;
+  return Math.round(((principal * ratePct) / 100) * 100) / 100;
 }
 
 export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps) {
@@ -59,17 +47,20 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
 
   const repaymentPreview = useMemo(() => {
     if (!selected || val <= 0) return null;
-    const apr = Number(selected.interestRateApr ?? 0);
-    const interest = estimateInterest(val, apr, selected.durationHours);
+    const rate = Number(selected.interestRateApr ?? 0);
+    const interest = termInterest(val, rate);
     const total = Math.round((val + interest) * 100) / 100;
+    const durationDays = Math.max(selected.durationHours / 24, 1 / 24);
+    const perDay = Math.round((interest / durationDays) * 100) / 100;
     return {
-      apr,
-      days: selected.durationHours / 24,
+      rate,
       durationLabel: formatDuration(selected.durationHours),
       graceLabel: selected.graceHours ? formatDuration(selected.graceHours) : null,
       principal: val,
       interest,
       total,
+      perDay,
+      durationDays,
     };
   }, [selected, val]);
 
@@ -146,14 +137,14 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
               <option key={p.id} value={p.id}>
                 {p.name} ({formatDuration(p.durationHours)}
                 {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""} ·{" "}
-                {Number(p.interestRateApr ?? 0).toFixed(1)}% p.a.)
+                {Number(p.interestRateApr ?? 0).toFixed(1)}% of amount)
               </option>
             ))}
           </select>
           {selected && (
             <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>
               Repay within {formatDuration(selected.durationHours)} after the loan is fully funded ·{" "}
-              {Number(selected.interestRateApr ?? 0).toFixed(2)}% p.a.
+              {Number(selected.interestRateApr ?? 0).toFixed(2)}% of the amount you borrow
             </div>
           )}
         </div>
@@ -172,7 +163,6 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
           />
         </div>
 
-        {/* Expected repayment at end of package term */}
         {repaymentPreview && (
           <div
             style={{
@@ -199,21 +189,30 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
                 {fmt(repaymentPreview.principal)}
               </span>
               <span style={{ color: "var(--ink-soft)" }}>
-                Est. interest ({repaymentPreview.apr.toFixed(2)}% p.a.)
+                Interest ({repaymentPreview.rate.toFixed(2)}% of amount)
               </span>
               <span className="mono" style={{ fontWeight: 600 }}>
                 {fmt(repaymentPreview.interest)}
               </span>
               <span style={{ fontWeight: 600 }}>Expected total to repay</span>
-              <span className="mono" style={{ fontWeight: 700, fontSize: 16, color: "var(--accent, #0d6efd)" }}>
+              <span
+                className="mono"
+                style={{ fontWeight: 700, fontSize: 16, color: "var(--accent, #0d6efd)" }}
+              >
                 {fmt(repaymentPreview.total)}
               </span>
             </div>
-            <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 8, lineHeight: 1.4 }}>
-              Estimate assumes the full amount stays outstanding for the whole term
-              (compound daily). Early repayment may cost less; late repayment after due
-              date can cost more
-              {repaymentPreview.graceLabel ? ` (grace: ${repaymentPreview.graceLabel})` : ""}.
+            <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 8, lineHeight: 1.45 }}>
+              Interest is a flat share of the amount for this package. It accrues evenly over the
+              term
+              {repaymentPreview.durationDays >= 1
+                ? ` (about ${fmt(repaymentPreview.perDay)} per day)`
+                : ""}
+              . Early repayment charges only the portion of interest for time used
+              {repaymentPreview.graceLabel
+                ? `; grace after due date: ${repaymentPreview.graceLabel}`
+                : ""}
+              .
             </div>
           </div>
         )}
