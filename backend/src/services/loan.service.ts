@@ -15,8 +15,9 @@ function elapsedHoursBetween(from: Date, to: Date): number {
 
 /**
  * Flat term interest: full term = principal × packageRate%.
- * Early repay charges only the time-proportional share
- * (elapsedHours / durationHours), capped at full term interest.
+ * Early repay charges the share for **completed whole hours** only
+ * (floor(elapsed) / durationHours), capped at full term interest.
+ * Updates at most once per hour — not continuous.
  * Field `interestRateApr` is the term rate (% of amount), not annual.
  */
 function applyEarlyRepayInterestCap(params: {
@@ -30,7 +31,8 @@ function applyEarlyRepayInterestCap(params: {
   if (!params.disbursedAt) {
     return { interestOwed: params.interestOwed, capped: false };
   }
-  const hours = elapsedHoursBetween(params.disbursedAt, params.now);
+  // Interest steps once per completed hour — not continuously by the second.
+  const hours = Math.floor(elapsedHoursBetween(params.disbursedAt, params.now));
   const due = linearInterestDue({
     principal: params.principal,
     ratePct: params.ratePct,

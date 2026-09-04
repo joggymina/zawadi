@@ -20,6 +20,14 @@ export function wholeDaysBetween(from: Date, to: Date): number {
   return Math.floor((to.getTime() - from.getTime()) / DAY_MS);
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/** Whole completed hours between two timestamps (loan interest ticks hourly). */
+export function wholeHoursBetween(from: Date, to: Date): number {
+  return Math.max(0, Math.floor((to.getTime() - from.getTime()) / HOUR_MS));
+}
+
+
 export function roundMoney(n: number): Decimal {
   return new Decimal(n.toFixed(2));
 }
@@ -48,7 +56,7 @@ export function packageDurationDays(durationHours: number): number {
 
 /**
  * Linear interest due after `elapsedHours`, capped at the full term interest.
- * Early repayment uses this so borrowers only pay for time used.
+ * Pass **whole hours only** (floor) so the total is stable within each hour.
  */
 export function linearInterestDue(params: {
   principal: Decimal | number;
@@ -59,7 +67,9 @@ export function linearInterestDue(params: {
   const total = termInterestTotal(params.principal, params.ratePct);
   if (total.lessThanOrEqualTo(0)) return new Decimal(0);
   const dur = params.durationHours > 0 ? params.durationHours : 24;
-  const fraction = Math.min(1, Math.max(0, params.elapsedHours / dur));
+  // Whole hours only — no fractional-hour drift between page load and repay.
+  const wholeHours = Math.max(0, Math.floor(params.elapsedHours));
+  const fraction = Math.min(1, wholeHours / dur);
   return total.mul(fraction).toDecimalPlaces(2);
 }
 
@@ -83,4 +93,22 @@ export function dailyTermAccrualSlice(params: {
   const perDay = total.div(daysInTerm);
   const gained = perDay.mul(params.wholeDays).toDecimalPlaces(2);
   return gained.greaterThan(remaining) ? remaining : gained;
+}
+
+/** Interest to add for `wholeHours` of hourly accrual, not exceeding term total. */
+export function hourlyTermAccrualSlice(params: {
+  principal: Decimal | number;
+  ratePct: Decimal | number;
+  durationHours: number;
+  wholeHours: number;
+  interestAlreadyOwed: Decimal | number;
+}): Decimal {
+  const total = termInterestTotal(params.principal, params.ratePct);
+  const already = new Decimal(params.interestAlreadyOwed);
+  const remaining = total.minus(already);
+  if (remaining.lessThanOrEqualTo(0) || params.wholeHours <= 0) return new Decimal(0);
+  const dur = params.durationHours > 0 ? params.durationHours : 24;
+  const perHour = total.div(dur);
+  const gained = perHour.mul(params.wholeHours).toDecimalPlaces(2);
+  return gained.greaterThan(remaining) ? remaining.toDecimalPlaces(2) : gained;
 }

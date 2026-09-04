@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { prisma } from "../lib/prisma";
-import { annualToDaily, compoundInterest, wholeDaysBetween, roundMoney, dailyTermAccrualSlice } from "../utils/money";
+import { annualToDaily, compoundInterest, wholeDaysBetween, roundMoney, dailyTermAccrualSlice , wholeHoursBetween, hourlyTermAccrualSlice } from "../utils/money";
 import { getAdminSettings } from "../services/adminSettings.service";
 import { runDefaultSettlements } from "../services/defaultSettlement.service";
 
@@ -39,30 +39,29 @@ export async function runDailyAccrual() {
     });
   }
 
-  // Borrower loans — flat term interest, accrued linearly over package duration.
+  // Borrower loans — flat term interest, stepped once per completed hour.
   // Full term interest = principal × interestRateApr% (term rate, not p.a.).
-  // Each day adds (totalTermInterest / durationDays), capped at total.
+  // Each hour adds (totalTermInterest / durationHours), capped at total.
   const loans = await prisma.loan.findMany({
     where: { status: "REPAYING" },
     include: { package: true },
   });
   for (const loan of loans) {
-    if (!loan.lastAccrualAt) continue;
-    const days = wholeDaysBetween(loan.lastAccrualAt, now);
-    if (days <= 0) continue;
+    const from = loan.lastAccrualAt ?? loan.disbursedAt;
+    if (!from) continue;
+    const hours = wholeHoursBetween(from, now);
+    if (hours <= 0) continue;
 
     const durationHours = loan.package?.durationHours ?? 24 * 7;
-    // Term fee is based on original loan amount (flat package %).
-    const gainedDecimal = dailyTermAccrualSlice({
+    const gainedDecimal = hourlyTermAccrualSlice({
       principal: loan.amount,
       ratePct: loan.interestRateApr,
       durationHours,
-      wholeDays: days,
+      wholeHours: hours,
       interestAlreadyOwed: loan.interestOwed,
     });
+    const newLastAccrual = new Date(from.getTime() + hours * 60 * 60 * 1000);
     if (gainedDecimal.lessThanOrEqualTo(0)) {
-      // Still advance lastAccrualAt so we don't spin, but only if already at cap.
-      const newLastAccrual = new Date(loan.lastAccrualAt.getTime() + days * 86_400_000);
       await prisma.loan.update({
         where: { id: loan.id },
         data: { lastAccrualAt: newLastAccrual },
@@ -70,7 +69,6 @@ export async function runDailyAccrual() {
       continue;
     }
 
-    const newLastAccrual = new Date(loan.lastAccrualAt.getTime() + days * 86_400_000);
     await prisma.loan.update({
       where: { id: loan.id },
       data: {
@@ -84,10 +82,18 @@ export async function runDailyAccrual() {
 }
 
 export function scheduleDailyAccrual() {
+  // Investor yield: once per day.
   cron.schedule("5 0 * * *", () => {
     runDailyAccrual().catch((err) => {
       // eslint-disable-next-line no-console
       console.error("Daily accrual job failed:", err);
+    });
+  });
+  // Loan interest: once per hour (whole-hour steps).
+  cron.schedule("3 * * * *", () => {
+    runDailyAccrual().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("Hourly loan accrual job failed:", err);
     });
   });
 }
