@@ -5,7 +5,7 @@ import * as publicApi from "../api/public";
 import type { Loan, AccountSummary, AdminSettings, MyFunding } from "../api/types";
 import type { PendingGuarantee } from "../api/loans";
 import { AmountModal } from "../components/AmountModal";
-import { fmt, pct, errorMessage, formatDuration } from "../utils/format";
+import { fmt, pct, errorMessage, formatDuration, fundingCountdown } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 import { NewLoanModal } from "../components/NewLoanModal";
@@ -59,6 +59,7 @@ export function LoansPage() {
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [error, setError] = useState("");
   const [fundModal, setFundModal] = useState<Loan | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [repayModal, setRepayModal] = useState<Loan | null>(null);
   const [newLoanOpen, setNewLoanOpen] = useState(false);
   const [respondBusy, setRespondBusy] = useState<string | null>(null);
@@ -87,6 +88,11 @@ export function LoansPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   if (error) {
     return <div style={{ padding: 20, color: "var(--rust)", fontSize: 13.5 }}>{error}</div>;
@@ -203,6 +209,18 @@ export function LoansPage() {
                       <> · {l.fundings!.map((f) => `@${f.funder?.username ?? "?"}`).join(", ")}</>
                     )}
                   </div>
+                  {l.fundingClosesAt && (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        marginTop: 6,
+                        color: "var(--amber, #b8860b)",
+                        fontWeight: 500,
+                      }}
+                    >
+                      {fundingCountdown(l.fundingClosesAt, nowTick)}
+                    </div>
+                  )}
                   <div
                     style={{
                       display: "flex",

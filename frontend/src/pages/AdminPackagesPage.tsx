@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import * as adminApi from "../api/admin";
 import type { AdminSettings, LoanPackage } from "../api/types";
-import { errorMessage, formatDuration } from "../utils/format";
+import { errorMessage, formatDuration, formatFundingWindow } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 
 function sortPackages(list: LoanPackage[]) {
@@ -26,9 +26,12 @@ export function AdminPackagesPage() {
     name: "",
     durationHours: "168",
     graceHours: "24",
+    /** Hours if duration >= 24h, else minutes */
+    fundingWindow: "72",
     interestRateApr: "33",
   });
   const [rateDrafts, setRateDrafts] = useState<Record<string, string>>({});
+  const [windowDrafts, setWindowDrafts] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [error, setError] = useState("");
@@ -50,6 +53,13 @@ export function AdminPackagesPage() {
         drafts[pkg.id] = String(Number(pkg.interestRateApr ?? 0));
       });
       setRateDrafts(drafts);
+      const wdrafts: Record<string, string> = {};
+      sorted.forEach((pkg) => {
+        const mins = pkg.fundingWindowMinutes ?? 4320;
+        wdrafts[pkg.id] =
+          pkg.durationHours < 24 ? String(mins) : String(Math.round(mins / 60));
+      });
+      setWindowDrafts(wdrafts);
       setNewPkg((x) => ({
         ...x,
         interestRateApr: String(Number(s.loanAnnualRatePct ?? 33)),
@@ -101,10 +111,15 @@ export function AdminPackagesPage() {
 
   function setDraftsFromList(list: LoanPackage[]) {
     const drafts: Record<string, string> = {};
+    const wdrafts: Record<string, string> = {};
     list.forEach((pkg) => {
       drafts[pkg.id] = String(Number(pkg.interestRateApr ?? 0));
+      const mins = pkg.fundingWindowMinutes ?? 4320;
+      wdrafts[pkg.id] =
+        pkg.durationHours < 24 ? String(mins) : String(Math.round(mins / 60));
     });
     setRateDrafts(drafts);
+    setWindowDrafts(wdrafts);
   }
 
   /** Save rate for this package only */
@@ -123,6 +138,7 @@ export function AdminPackagesPage() {
           name: p.name,
           durationHours: p.durationHours,
           graceHours: p.graceHours,
+          fundingWindowMinutes: p.fundingWindowMinutes ?? 4320,
           interestRateApr: rate,
           active: p.active,
         });
@@ -203,6 +219,7 @@ export function AdminPackagesPage() {
     const durationHours = parseInt(newPkg.durationHours, 10);
     const graceHours = parseInt(newPkg.graceHours, 10) || 0;
     const interestRateApr = parseFloat(newPkg.interestRateApr);
+    const windowVal = parseInt(newPkg.fundingWindow, 10);
     if (!newPkg.name.trim() || !durationHours || durationHours <= 0) {
       showToast("Name and positive duration hours required");
       return;
@@ -211,15 +228,24 @@ export function AdminPackagesPage() {
       showToast("Enter a valid interest rate");
       return;
     }
+    if (!windowVal || windowVal <= 0) {
+      showToast("Enter a positive open-for-funding window");
+      return;
+    }
+    const fundingWindowMinutes =
+      durationHours < 24 ? windowVal : windowVal * 60;
+    const windowLabel =
+      durationHours < 24 ? `${windowVal} min` : `${windowVal} h`;
     askConfirm({
       title: "Add package?",
-      body: `Create “${newPkg.name.trim()}” (${formatDuration(durationHours)}) at ${interestRateApr.toFixed(2)}% of amount?`,
+      body: `Create “${newPkg.name.trim()}” (${formatDuration(durationHours)}) at ${interestRateApr.toFixed(2)}% of amount? Open for funding: ${windowLabel}.`,
       confirmLabel: "Add package",
       onConfirm: async () => {
         const pkg = await adminApi.createPackage({
           name: newPkg.name.trim(),
           durationHours,
           graceHours,
+          fundingWindowMinutes,
           interestRateApr,
           active: true,
           sortOrder: durationHours,
@@ -233,9 +259,41 @@ export function AdminPackagesPage() {
           name: "",
           durationHours: "168",
           graceHours: "24",
+          fundingWindow: "72",
           interestRateApr: String(defaultLoanRate || 33),
         });
         showToast(`Added ${pkg.name} at ${interestRateApr.toFixed(2)}% of amount`);
+      },
+    });
+  }
+
+  function requestSaveWindow(p: LoanPackage) {
+    const raw = parseInt(windowDrafts[p.id] ?? "", 10);
+    if (!raw || raw <= 0) {
+      showToast("Enter a positive funding window");
+      return;
+    }
+    const fundingWindowMinutes = p.durationHours < 24 ? raw : raw * 60;
+    const label = p.durationHours < 24 ? `${raw} min` : `${raw} h`;
+    askConfirm({
+      title: "Update open-for-funding window?",
+      body: `Set “${p.name}” funding window to ${label}? Only new loans under this package use the new window.`,
+      confirmLabel: "Save window",
+      onConfirm: async () => {
+        const updated = await adminApi.updatePackage(p.id, {
+          name: p.name,
+          durationHours: p.durationHours,
+          graceHours: p.graceHours,
+          fundingWindowMinutes,
+          interestRateApr: Number(p.interestRateApr),
+          active: p.active,
+        });
+        setPackages((list) => {
+          const next = sortPackages(list.map((x) => (x.id === p.id ? updated : x)));
+          setDraftsFromList(next);
+          return next;
+        });
+        showToast(`Saved ${p.name} funding window: ${label}`);
       },
     });
   }
@@ -387,6 +445,8 @@ export function AdminPackagesPage() {
                   {p.graceHours ? ` · ${formatDuration(p.graceHours)} grace` : ""}
                   {" · "}
                   {Number(p.interestRateApr ?? 0).toFixed(2)}% of amount
+                  {" · "}
+                  {formatFundingWindow(p.fundingWindowMinutes, p.durationHours)}
                 </div>
 
                 <div
@@ -428,6 +488,27 @@ export function AdminPackagesPage() {
                     }
                   >
                     Apply to all
+                  </button>
+                  <input
+                    className="field-input mono"
+                    type="number"
+                    min={1}
+                    value={windowDrafts[p.id] ?? ""}
+                    onChange={(e) =>
+                      setWindowDrafts((d) => ({ ...d, [p.id]: e.target.value }))
+                    }
+                    style={{ width: 72, padding: "7px 8px", fontSize: 13 }}
+                    title={p.durationHours < 24 ? "Funding window (minutes)" : "Funding window (hours)"}
+                  />
+                  <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+                    {p.durationHours < 24 ? "min open" : "h open"}
+                  </span>
+                  <button
+                    className="btn btn-outline"
+                    style={{ padding: "6px 12px", fontSize: 12 }}
+                    onClick={() => requestSaveWindow(p)}
+                  >
+                    Save window
                   </button>
                 </div>
               </div>
@@ -479,6 +560,21 @@ export function AdminPackagesPage() {
             value={newPkg.graceHours}
             onChange={(e) => setNewPkg((x) => ({ ...x, graceHours: e.target.value }))}
             style={{ flex: 1, minWidth: 70 }}
+          />
+          <input
+            className="field-input mono"
+            type="number"
+            placeholder={
+              parseInt(newPkg.durationHours, 10) < 24 ? "Open min" : "Open h"
+            }
+            value={newPkg.fundingWindow}
+            onChange={(e) => setNewPkg((x) => ({ ...x, fundingWindow: e.target.value }))}
+            style={{ flex: 1, minWidth: 70 }}
+            title={
+              parseInt(newPkg.durationHours, 10) < 24
+                ? "Open-for-funding window in minutes"
+                : "Open-for-funding window in hours"
+            }
           />
           <input
             className="field-input mono"

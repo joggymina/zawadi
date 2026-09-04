@@ -5,7 +5,7 @@ import * as loansApi from "../api/loans";
 import * as publicApi from "../api/public";
 import type { AccountSummary, Loan, AdminSettings, Offer } from "../api/types";
 import { AmountModal } from "../components/AmountModal";
-import { fmt, pct, errorMessage } from "../utils/format";
+import { fmt, pct, errorMessage, fundingCountdown } from "../utils/format";
 import { useToast } from "../context/ToastContext";
 
 import * as paymentsApi from "../api/payments";
@@ -18,6 +18,7 @@ export function HomePage() {
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [openLoans, setOpenLoans] = useState<Loan[]>([]);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [modal, setModal] = useState<"invest" | "withdraw" | null>(null);
   const [error, setError] = useState("");
   const [hidden, setHidden] = useState(false);
@@ -40,6 +41,11 @@ export function HomePage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   if (error) return <div style={{ padding: 20, color: "var(--rust)", fontSize: 13.5 }}>{error}</div>;
   if (!account || !settings) return <div style={{ padding: 20, color: "var(--ink-soft)" }}>Loading…</div>;
@@ -109,6 +115,11 @@ export function HomePage() {
               <span className="mono" style={{ fontSize: 13.5 }}>{fmt(l.amount)}</span>
             </div>
             <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>{l.purpose || "General purpose loan"} · {pct(l.interestRateApr)} p.a.</div>
+            {l.fundingClosesAt && (
+              <div style={{ fontSize: 11.5, color: "#b8860b", marginTop: 4, fontWeight: 500 }}>
+                {fundingCountdown(l.fundingClosesAt, nowTick)}
+              </div>
+            )}
           </Link>
         ))}
       </div>

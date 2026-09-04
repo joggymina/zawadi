@@ -75,6 +75,7 @@ export function createPackage(body: {
   name: string;
   durationHours: number;
   graceHours?: number;
+  fundingWindowMinutes?: number;
   interestRateApr?: number;
   active?: boolean;
   sortOrder?: number;
@@ -88,6 +89,7 @@ export function updatePackage(
     name: string;
     durationHours: number;
     graceHours?: number;
+    fundingWindowMinutes?: number;
     interestRateApr?: number;
     active?: boolean;
     sortOrder?: number;
@@ -173,4 +175,26 @@ export function rejectKyc(id: string, reason?: string) {
     method: "POST",
     body: { reason },
   });
+}
+
+export function listFundingWindowClosed() {
+  return request<
+    {
+      id: string;
+      amount: string;
+      fundedAmount: string;
+      fundingClosesAt: string | null;
+      status: string;
+      borrower?: { id: string; username: string };
+      package?: { id: string; name: string; durationHours: number } | null;
+      fundings?: { amount: string; funder?: { username: string } }[];
+    }[]
+  >("/api/admin/funding/closed");
+}
+
+export function extendFundingWindow(loanId: string, extraMinutes: number) {
+  return request<{ id: string; fundingClosesAt: string | null }>(
+    `/api/admin/loans/${loanId}/extend-funding`,
+    { method: "POST", body: { extraMinutes } },
+  );
 }

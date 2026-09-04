@@ -50,6 +50,8 @@ export interface LoanPackage {
   name: string;
   durationHours: number;
   graceHours: number;
+  /** Minutes a loan stays open for funding after guarantors accept */
+  fundingWindowMinutes?: number;
   interestRateApr: string;
   active: boolean;
   sortOrder: number;
@@ -100,6 +102,8 @@ export interface Loan {
   createdAt: string;
   packageId?: string | null;
   dueAt?: string | null;
+  fundingOpensAt?: string | null;
+  fundingClosesAt?: string | null;
   package?: LoanPackage | null;
   borrower?: { username: string };
   guarantors: LoanGuarantor[];

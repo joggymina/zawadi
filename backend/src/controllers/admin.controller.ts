@@ -258,3 +258,60 @@ export async function rejectKycSubmission(req: Request, res: Response) {
   });
   return res.json({ ok: true });
 }
+
+export async function listFundingWindowClosed(_req: Request, res: Response) {
+  const now = new Date();
+  const loans = await prisma.loan.findMany({
+    where: {
+      status: "OPEN",
+      fundingClosesAt: { lte: now },
+    },
+    include: {
+      package: true,
+      borrower: { select: { id: true, username: true } },
+      fundings: {
+        include: { funder: { select: { username: true } } },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+    orderBy: { fundingClosesAt: "asc" },
+  });
+  return res.json(loans);
+}
+
+export const extendFundingSchema = z.object({
+  /** Extra minutes to add from max(now, current closesAt) */
+  extraMinutes: z.number().int().min(1).max(60 * 24 * 30),
+});
+
+export async function extendFundingWindow(req: Request, res: Response) {
+  const { extraMinutes } = req.body as { extraMinutes: number };
+  const loan = await prisma.loan.findUnique({ where: { id: req.params.id } });
+  if (!loan) throw new AppError("Loan not found.", 404);
+  if (loan.status !== "OPEN") throw new AppError("Loan is not open for funding.", 422);
+
+  const currentClose = (loan as { fundingClosesAt?: Date | null }).fundingClosesAt;
+  const base =
+    currentClose && currentClose.getTime() > Date.now() ? currentClose : new Date();
+  const fundingClosesAt = new Date(base.getTime() + extraMinutes * 60 * 1000);
+  const fundingOpensAt =
+    (loan as { fundingOpensAt?: Date | null }).fundingOpensAt ?? new Date();
+
+  const updated = await prisma.loan.update({
+    where: { id: loan.id },
+    data: { fundingClosesAt, fundingOpensAt },
+    include: {
+      package: true,
+      borrower: { select: { username: true } },
+      fundings: true,
+    },
+  });
+
+  await writeAudit({
+    userId: req.user!.id,
+    action: "ADMIN_EXTEND_FUNDING_WINDOW",
+    metadata: { loanId: loan.id, extraMinutes, fundingClosesAt: fundingClosesAt.toISOString() },
+    ip: req.ip,
+  });
+  return res.json(updated);
+}

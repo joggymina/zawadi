@@ -28,6 +28,9 @@ export function AdminPage() {
   const showToast = useToast();
   const [pending, setPending] = useState<LoanRepayment[]>([]);
   const [defaults, setDefaults] = useState<DefaultCandidate[]>([]);
+  const [fundingClosed, setFundingClosed] = useState<
+    Awaited<ReturnType<typeof adminApi.listFundingWindowClosed>>
+  >([]);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [error, setError] = useState("");
@@ -37,12 +40,14 @@ export function AdminPage() {
     setLoading(true);
     setError("");
     try {
-      const [pendingList, defaultList] = await Promise.all([
+      const [pendingList, defaultList, closedList] = await Promise.all([
         adminApi.listPendingRepayments(),
         adminApi.listDefaultCandidates(),
+        adminApi.listFundingWindowClosed().catch(() => []),
       ]);
       setPending(pendingList);
       setDefaults(defaultList);
+      setFundingClosed(closedList);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -114,6 +119,19 @@ export function AdminPage() {
       onConfirm: async () => {
         await adminApi.runAllDefaultSettlements();
         showToast("Default settlement run finished");
+        await load();
+      },
+    });
+  }
+
+  function extendFunding(loanId: string, borrower: string, extraMinutes: number, label: string) {
+    setConfirm({
+      title: "Extend funding window?",
+      body: `Put @${borrower}'s loan back on the marketplace for ${label}. Members can fund again until the new close time.`,
+      confirmLabel: "Extend",
+      onConfirm: async () => {
+        await adminApi.extendFundingWindow(loanId, extraMinutes);
+        showToast(`Funding window extended by ${label}`);
         await load();
       },
     });
@@ -246,6 +264,91 @@ export function AdminPage() {
                 </button>
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+
+      <section>
+        <div className="display" style={{ fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
+          Funding window closed
+        </div>
+        {fundingClosed.length === 0 ? (
+          <div
+            style={{
+              fontSize: 12.5,
+              color: "var(--ink-soft)",
+              background: "var(--surface)",
+              borderRadius: 10,
+              padding: 12,
+            }}
+          >
+            No open loans past their funding window.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {fundingClosed.map((l) => {
+              const remaining = Number(l.amount) - Number(l.fundedAmount);
+              return (
+                <div key={l.id} className="card" style={{ padding: "10px 12px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                    <span>@{l.borrower?.username ?? "borrower"}</span>
+                    <span className="mono">
+                      {fmt(l.fundedAmount)} / {fmt(l.amount)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                    {l.package?.name ?? "Package"} · closed{" "}
+                    {l.fundingClosesAt ? new Date(l.fundingClosesAt).toLocaleString() : "—"}
+                    {remaining > 0 ? ` · ${fmt(remaining)} still needed` : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <button
+                      className="btn btn-outline"
+                      style={{ padding: "7px 10px", fontSize: 12 }}
+                      onClick={() =>
+                        extendFunding(
+                          l.id,
+                          l.borrower?.username ?? "borrower",
+                          60,
+                          "1 hour",
+                        )
+                      }
+                    >
+                      +1 hour
+                    </button>
+                    <button
+                      className="btn btn-outline"
+                      style={{ padding: "7px 10px", fontSize: 12 }}
+                      onClick={() =>
+                        extendFunding(
+                          l.id,
+                          l.borrower?.username ?? "borrower",
+                          24 * 60,
+                          "24 hours",
+                        )
+                      }
+                    >
+                      +24 hours
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      style={{ padding: "7px 10px", fontSize: 12 }}
+                      onClick={() =>
+                        extendFunding(
+                          l.id,
+                          l.borrower?.username ?? "borrower",
+                          72 * 60,
+                          "72 hours",
+                        )
+                      }
+                    >
+                      +72 hours
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>

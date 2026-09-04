@@ -208,9 +208,22 @@ export async function respondAsGuarantor(params: {
     });
 
     if (pendingLeft === 0) {
+      let windowMinutes = 4320;
+      if (loan.packageId) {
+        const pkg = await tx.loanPackage.findUnique({ where: { id: loan.packageId } });
+        if (pkg && typeof (pkg as { fundingWindowMinutes?: number }).fundingWindowMinutes === "number") {
+          windowMinutes = Math.max(1, (pkg as { fundingWindowMinutes: number }).fundingWindowMinutes);
+        }
+      }
+      const now = new Date();
+      const closes = new Date(now.getTime() + windowMinutes * 60 * 1000);
       await tx.loan.update({
         where: { id: loan.id },
-        data: { status: "OPEN" },
+        data: {
+          status: "OPEN",
+          fundingOpensAt: now,
+          fundingClosesAt: closes,
+        },
       });
       return { loanId: loan.id, status: "OPEN" as const };
     }
@@ -290,6 +303,10 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
     });
     if (!loan) throw new AppError("Loan not found.", 404);
     if (loan.status !== "OPEN") throw new AppError("This loan is not open for funding.", 422);
+    const closesAt = (loan as { fundingClosesAt?: Date | null }).fundingClosesAt;
+    if (closesAt && closesAt.getTime() <= Date.now()) {
+      throw new AppError("Funding window has closed for this loan.", 422);
+    }
     if (loan.borrowerId === params.funderId) {
       throw new AppError("You can't fund your own loan.", 422);
     }

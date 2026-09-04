@@ -156,6 +156,8 @@ model LoanPackage {
   name            String
   durationHours   Int
   graceHours      Int      @default(0)
+  /// Minutes a loan stays open for funding after all guarantors accept
+  fundingWindowMinutes Int  @default(4320)
   /// APR for loans created under this package (% p.a.)
   interestRateApr Decimal  @db.Decimal(6, 3) @default(18)
   active          Boolean  @default(true)
@@ -176,6 +178,8 @@ model Loan {
   packageId       String?
   package         LoanPackage? @relation(fields: [packageId], references: [id])
   dueAt           DateTime?
+  fundingOpensAt  DateTime?
+  fundingClosesAt DateTime?
 
   principalOwed   Decimal    @db.Decimal(18, 2) @default(0)
   interestOwed    Decimal    @db.Decimal(18, 2) @default(0)
@@ -192,6 +196,7 @@ model Loan {
   @@index([borrowerId])
   @@index([status])
   @@index([packageId])
+  @@index([fundingClosesAt])
 }
 
 // Snapshot of the guarantor's qualifying balance at pledge time, so a

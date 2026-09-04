@@ -41,8 +41,13 @@ export async function createLoan(req: Request, res: Response) {
 }
 
 export async function listMarketplace(req: Request, res: Response) {
+  const now = new Date();
   const loans = await prisma.loan.findMany({
-    where: { status: "OPEN", borrowerId: { not: req.user!.id } },
+    where: {
+      status: "OPEN",
+      borrowerId: { not: req.user!.id },
+      OR: [{ fundingClosesAt: null }, { fundingClosesAt: { gt: now } }],
+    },
     include: {
       package: true,
       guarantors: { include: { user: { select: { username: true } } } },

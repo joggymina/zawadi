@@ -8,6 +8,8 @@ export const packageSchema = z.object({
   name: z.string().min(1).max(80),
   durationHours: z.number().int().positive().max(24 * 365 * 5),
   graceHours: z.number().int().min(0).max(24 * 90).optional(),
+  /** Stored as minutes; UI uses minutes for packages < 24h duration, hours otherwise */
+  fundingWindowMinutes: z.number().int().min(1).max(60 * 24 * 90).optional(),
   interestRateApr: z.number().min(0).max(100).optional(),
   active: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
@@ -41,6 +43,7 @@ export async function createPackage(req: Request, res: Response) {
       name: body.name,
       durationHours: body.durationHours,
       graceHours: body.graceHours ?? 0,
+      fundingWindowMinutes: body.fundingWindowMinutes ?? 4320,
       interestRateApr: body.interestRateApr ?? 18,
       active: body.active ?? true,
       sortOrder: body.sortOrder ?? body.durationHours,
@@ -66,6 +69,10 @@ export async function updatePackage(req: Request, res: Response) {
       name: body.name,
       durationHours: body.durationHours,
       graceHours: body.graceHours ?? existing.graceHours,
+      fundingWindowMinutes:
+        body.fundingWindowMinutes !== undefined
+          ? body.fundingWindowMinutes
+          : (existing as { fundingWindowMinutes?: number }).fundingWindowMinutes ?? 4320,
       interestRateApr:
         body.interestRateApr !== undefined ? body.interestRateApr : existing.interestRateApr,
       active: body.active ?? existing.active,

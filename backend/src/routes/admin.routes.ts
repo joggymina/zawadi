@@ -23,6 +23,9 @@ import {
   approveKycSubmission,
   rejectKycSubmission,
   rejectKycSchema,
+  listFundingWindowClosed,
+  extendFundingWindow,
+  extendFundingSchema,
 } from "../controllers/admin.controller";
 import {
   listAdminPackages,
@@ -67,5 +70,12 @@ router.post("/packages/bulk-rate", validateBody(bulkRateSchema), asyncHandler(bu
 router.get("/defaults/candidates", asyncHandler(listDefaultCandidates));
 router.post("/defaults/run", asyncHandler(runAllDefaultSettlements));
 router.post("/loans/:id/settle-default", asyncHandler(settleDefault));
+
+router.get("/funding/closed", asyncHandler(listFundingWindowClosed));
+router.post(
+  "/loans/:id/extend-funding",
+  validateBody(extendFundingSchema),
+  asyncHandler(extendFundingWindow),
+);
 
 export default router;
