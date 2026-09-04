@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import * as loanService from "../services/loan.service";
+import { computeLoanOutstanding } from "../services/loan.service";
 import { writeAudit } from "../services/audit.service";
 import { assertCreateLoanAllowed, assertFundAllowed } from "../services/kycLimits.service";
 
@@ -79,7 +80,31 @@ export async function listMine(req: Request, res: Response) {
     },
     orderBy: { createdAt: "desc" },
   });
-  return res.json(loans);
+
+  // Attach the same totalDue repayLoan will enforce, so the UI amount matches submit.
+  const now = new Date();
+  const enriched = loans.map((loan) => {
+    if (loan.status !== "REPAYING" && loan.status !== "DEFAULTED") {
+      return {
+        ...loan,
+        totalDue: null as string | null,
+      };
+    }
+    const due = computeLoanOutstanding(loan, now);
+    const pending = (loan.repayments ?? [])
+      .filter((r) => r.status === "PENDING")
+      .reduce((s, r) => s + Number(r.amount), 0);
+    const totalDueNum = Math.max(0, Number(due.totalDue) - pending);
+    return {
+      ...loan,
+      // Present current interest due so principal + interest matches totalDue.
+      interestOwed: due.interestDue,
+      totalDue: due.totalDue.toFixed(2),
+      amountDueNow: totalDueNum.toFixed(2),
+    };
+  });
+
+  return res.json(enriched);
 }
 
 export async function listFunded(req: Request, res: Response) {

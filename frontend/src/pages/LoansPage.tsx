@@ -458,9 +458,14 @@ export function LoansPage() {
                 const pendingRepay = (l.repayments ?? [])
                   .filter((r) => r.status === "PENDING")
                   .reduce((s, r) => s + Number(r.amount), 0);
-                const booked = Number(l.principalOwed) + Number(l.interestOwed);
-                // Show remaining after pending holds so the card matches what you can still repay.
-                const outstanding = Math.max(0, booked - pendingRepay);
+                // Prefer server amountDueNow (same formula as repay endpoint).
+                const outstanding =
+                  l.amountDueNow != null
+                    ? Math.max(0, Number(l.amountDueNow))
+                    : Math.max(
+                        0,
+                        Number(l.principalOwed) + Number(l.interestOwed) - pendingRepay,
+                      );
                 const meta = statusMeta(l.status);
                 return (
                   <div key={l.id} className="card" style={{ padding: "14px 16px" }}>
@@ -516,13 +521,13 @@ export function LoansPage() {
                         }}
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-                          <span style={{ color: "var(--ink-soft)" }}>Outstanding balance</span>
-                          <span className="mono">{fmt(outstanding)}</span>
+                          <span style={{ color: "var(--ink-soft)" }}>Total amount due</span>
+                          <span className="mono" style={{ fontWeight: 600 }}>{fmt(outstanding)}</span>
                         </div>
                         <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
-                          Principal {fmt(l.principalOwed)} + interest {fmt(l.interestOwed)}
+                          Includes principal and interest for this package term
                           {pendingRepay > 0
-                            ? ` · ${fmt(pendingRepay)} awaiting approval`
+                            ? ` · ${fmt(pendingRepay)} already submitted (awaiting approval)`
                             : ""}
                         </div>
                         {l.status === "DEFAULTED" && (
@@ -531,14 +536,19 @@ export function LoansPage() {
                             and, if needed, guarantor holds.
                           </div>
                         )}
-                        {l.status === "REPAYING" && (
+                        {l.status === "REPAYING" && pendingRepay <= 0 && outstanding > 0 && (
                           <button
                             className="btn btn-primary"
                             style={{ width: "100%", marginTop: 10, padding: "9px 0", fontSize: 12.5 }}
                             onClick={() => setRepayModal(l)}
                           >
-                            Make a repayment
+                            Pay amount due
                           </button>
+                        )}
+                        {l.status === "REPAYING" && pendingRepay > 0 && (
+                          <div style={{ fontSize: 12, color: "#7a5a2e", marginTop: 10 }}>
+                            A repayment is awaiting approval. You can submit another after it is reviewed.
+                          </div>
                         )}
                         {(l.repayments?.length ?? 0) > 0 && (
                           <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -615,23 +625,39 @@ export function LoansPage() {
       {repayModal && (
         <AmountModal
           title="Repay loan"
-          balanceLabel={(() => {
+          defaultAmount={(() => {
+            if (repayModal.amountDueNow != null) {
+              return Math.max(0, Number(repayModal.amountDueNow));
+            }
             const pending = (repayModal.repayments ?? [])
               .filter((r) => r.status === "PENDING")
               .reduce((s, r) => s + Number(r.amount), 0);
             const booked =
               Number(repayModal.principalOwed) + Number(repayModal.interestOwed);
-            const left = Math.max(0, booked - pending);
-            return `Outstanding: ${fmt(left)} (principal ${fmt(repayModal.principalOwed)} + interest ${fmt(repayModal.interestOwed)}${pending > 0 ? ` − ${fmt(pending)} pending` : ""})`;
+            return Math.max(0, Math.round((booked - pending) * 100) / 100);
           })()}
-          confirmLabel="Repay"
+          balanceLabel={(() => {
+            const left =
+              repayModal.amountDueNow != null
+                ? Math.max(0, Number(repayModal.amountDueNow))
+                : Math.max(
+                    0,
+                    Number(repayModal.principalOwed) +
+                      Number(repayModal.interestOwed) -
+                      (repayModal.repayments ?? [])
+                        .filter((r) => r.status === "PENDING")
+                        .reduce((s, r) => s + Number(r.amount), 0),
+                  );
+            return `Total amount due (what you must pay to clear this loan): ${fmt(left)}. This is the same figure the server will accept.`;
+          })()}
+          confirmLabel="Submit repayment"
           needsConfirm
-          confirmHint="Repayment is held awaiting approval."
+          confirmHint="Held awaiting approval. Prefer the full amount due so the loan clears in one step."
           onClose={() => setRepayModal(null)}
           onSubmit={async (amt) => {
             await loansApi.repay(repayModal.id, amt);
             await load();
-            showToast(`Repaid ${fmt(amt)} — awaiting approval`);
+            showToast(`Repayment of ${fmt(amt)} submitted — awaiting approval`);
             setRepayModal(null);
           }}
         />

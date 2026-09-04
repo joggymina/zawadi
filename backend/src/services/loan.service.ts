@@ -47,6 +47,35 @@ function applyEarlyRepayInterestCap(params: {
   return { interestOwed: params.interestOwed, capped: false };
 }
 
+/** Same outstanding the repay endpoint uses — UI must show this total. */
+export function computeLoanOutstanding(loan: {
+  amount: Decimal | { toString(): string };
+  principalOwed: Decimal | { toString(): string };
+  interestOwed: Decimal | { toString(): string };
+  interestRateApr: Decimal | { toString(): string };
+  disbursedAt: Date | null;
+  package?: { durationHours: number } | null;
+}, now = new Date()) {
+  const principalOwed = new Decimal(loan.principalOwed.toString());
+  const durationHours = loan.package?.durationHours ?? 24 * 7;
+  const capped = applyEarlyRepayInterestCap({
+    principal: new Decimal(loan.amount.toString()),
+    interestOwed: new Decimal(loan.interestOwed.toString()),
+    ratePct: loan.interestRateApr,
+    durationHours,
+    disbursedAt: loan.disbursedAt,
+    now,
+  });
+  const interestDue = capped.interestOwed;
+  const totalDue = principalOwed.plus(interestDue).toDecimalPlaces(2);
+  return {
+    principalDue: principalOwed.toDecimalPlaces(2),
+    interestDue: interestDue.toDecimalPlaces(2),
+    totalDue,
+    interestChanged: !interestDue.eq(new Decimal(loan.interestOwed.toString())),
+  };
+}
+
 export async function createLoanRequest(params: {
   borrowerId: string;
   amount: number;
@@ -456,48 +485,54 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     if (loan.borrowerId !== params.borrowerId) throw new AppError("This isn't your loan.", 403);
     if (loan.status !== "REPAYING") throw new AppError("This loan isn't awaiting repayment.", 422);
 
-    // Bring interest to time-proportional term amount (early = less, full term = amount × rate%).
-    const durationHours = loan.package?.durationHours ?? 24 * 7;
-    // Use original loan amount so partial principal payments don't shrink the term fee base mid-way.
-    const interestPrincipal = loan.amount;
-    const capped = applyEarlyRepayInterestCap({
-      principal: interestPrincipal,
-      interestOwed: loan.interestOwed,
-      ratePct: loan.interestRateApr,
-      durationHours,
-      disbursedAt: loan.disbursedAt,
-      now,
-    });
-    let interestOwed = capped.interestOwed;
+    // Interest due uses the same formula as list/mine totalDue (see computeLoanOutstanding).
+    const due = computeLoanOutstanding(loan, now);
+    let interestOwed = due.interestDue;
     let lastAccrualAt = now;
 
-    // Pending repayments already reserved cash from the borrower; don't let
-    // another repayment over-claim the same outstanding.
     const pending = await tx.loanRepayment.findMany({
       where: { loanId: loan.id, status: "PENDING" },
-      select: { amount: true },
+      select: { id: true, amount: true },
     });
-    const pendingTotal = pending.reduce((s, p) => s.plus(p.amount), new Decimal(0));
-    const outstanding = loan.principalOwed.plus(interestOwed).minus(pendingTotal);
-    if (outstanding.lessThanOrEqualTo(0)) {
-      throw new AppError("A repayment is already awaiting approval for the full balance.", 422);
-    }
-    if (amount.greaterThan(outstanding)) {
-      throw new AppError(`Outstanding balance (after pending) is only ${outstanding.toFixed(2)}.`, 422);
+    if (pending.length > 0) {
+      throw new AppError(
+        "A repayment is already awaiting approval on this loan. Wait for it to be reviewed before submitting another.",
+        422,
+      );
     }
 
-    await assertCanDebitPrincipal(params.borrowerId, amount);
+    const outstanding = due.totalDue;
+    if (outstanding.lessThanOrEqualTo(0)) {
+      throw new AppError("This loan has no outstanding balance.", 422);
+    }
+
+    let payAmount = amount.toDecimalPlaces(2);
+    // Allow 0.05 rounding tolerance only so UI cents match server cents — not a write-off.
+    if (payAmount.greaterThan(outstanding)) {
+      if (payAmount.minus(outstanding).lessThanOrEqualTo(0.05)) {
+        payAmount = outstanding;
+      } else {
+        throw new AppError(
+          `Total amount due right now is ${outstanding.toFixed(2)} (principal ${due.principalDue.toFixed(2)} + interest ${due.interestDue.toFixed(2)}).`,
+          422,
+        );
+      }
+    } else if (outstanding.minus(payAmount).lessThanOrEqualTo(0.05) && payAmount.greaterThan(0)) {
+      payAmount = outstanding;
+    }
+
+    await assertCanDebitPrincipal(params.borrowerId, payAmount);
 
     const account = await tx.investmentAccount.findUniqueOrThrow({
       where: { userId: params.borrowerId },
     });
-    if (account.principalBalance.lessThan(amount)) {
+    if (account.principalBalance.lessThan(payAmount)) {
       throw new AppError("Insufficient principal balance.", 422);
     }
 
     await tx.investmentAccount.update({
       where: { userId: params.borrowerId },
-      data: { principalBalance: { decrement: amount } },
+      data: { principalBalance: { decrement: payAmount } },
     });
     const after = await tx.investmentAccount.findUniqueOrThrow({
       where: { userId: params.borrowerId },
@@ -506,7 +541,7 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       data: {
         userId: params.borrowerId,
         type: "LOAN_REPAYMENT",
-        amount,
+        amount: payAmount,
         balanceAfter: after.principalBalance.plus(after.interestBalance),
         referenceId: loan.id,
         note: "Loan repayment (awaiting approval)",
@@ -514,8 +549,7 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     });
 
     // Snapshot interest at submit time, but do NOT reduce principalOwed /
-    // interestOwed until approval. That keeps the UI outstanding correct
-    // while a repayment is "Awaiting approval".
+    // interestOwed until approval. Outstanding stays the full total due.
     await tx.loan.update({
       where: { id: loan.id },
       data: {
@@ -527,7 +561,7 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     const repayment = await tx.loanRepayment.create({
       data: {
         loanId: loan.id,
-        amount,
+        amount: payAmount,
         status: "PENDING",
         principalOwedBefore: loan.principalOwed,
         interestOwedBefore: interestOwed,
@@ -625,14 +659,15 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
       0,
       loan.interestOwed.minus(interestPart),
     ).toDecimalPlaces(2);
+    // All cents accounted for — no write-offs. Fully repaid only when both sides are zero.
     const fullyRepaid =
-      newPrincipal.lessThanOrEqualTo(0.01) && newInterest.lessThanOrEqualTo(0.01);
+      newPrincipal.lessThanOrEqualTo(0) && newInterest.lessThanOrEqualTo(0);
 
     await tx.loan.update({
       where: { id: loan.id },
       data: {
-        principalOwed: fullyRepaid ? new Decimal(0) : newPrincipal,
-        interestOwed: fullyRepaid ? new Decimal(0) : newInterest,
+        principalOwed: newPrincipal,
+        interestOwed: newInterest,
         status: fullyRepaid ? "REPAID" : "REPAYING",
       },
     });
