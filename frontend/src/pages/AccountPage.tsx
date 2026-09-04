@@ -160,8 +160,9 @@ export function AccountPage() {
               Verify identity
             </div>
             <p style={{ fontSize: 13, color: "var(--ink-soft)", lineHeight: 1.5, marginBottom: 14 }}>
-              Upload your full name, national ID number, a clear selfie, and both sides of your ID.
-              An admin will review before higher limits apply.
+              Use real photos of yourself and your national ID. No screenshots, filters, or
+              AI-generated images. Face must be clear and match the ID. ID corners must be visible
+              and text readable. Your documents are reviewed before higher limits apply.
             </p>
 
             {kycLoading && (
@@ -227,17 +228,38 @@ export function AccountPage() {
 
                   {(
                     [
-                      ["Selfie (face clear)", selfie, setSelfie],
-                      ["ID front", idFront, setIdFront],
-                      ["ID back", idBack, setIdBack],
+                      [
+                        "Selfie (face clear)",
+                        "Front-facing, good light, no sunglasses or hat.",
+                        selfie,
+                        setSelfie,
+                        "user" as const,
+                      ],
+                      [
+                        "ID front",
+                        "Full card in frame, no glare, all text readable.",
+                        idFront,
+                        setIdFront,
+                        "environment" as const,
+                      ],
+                      [
+                        "ID back",
+                        "Full back of the card; barcodes or chip visible if present.",
+                        idBack,
+                        setIdBack,
+                        "environment" as const,
+                      ],
                     ] as const
-                  ).map(([label, preview, setter]) => (
+                  ).map(([label, hint, preview, setter, capture]) => (
                     <div key={label} style={{ marginTop: 12 }}>
                       <label className="field-label">{label}</label>
+                      <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 4 }}>
+                        {hint}
+                      </div>
                       <input
                         type="file"
                         accept="image/*"
-                        capture={label.startsWith("Selfie") ? "user" : "environment"}
+                        capture={capture}
                         onChange={(e) => void onPick(e.target.files?.[0], setter)}
                       />
                       {preview && (
@@ -289,8 +311,8 @@ export function AccountPage() {
               formal credit check, and repayment isn&apos;t guaranteed.
             </p>
             <p style={{ marginTop: 10 }}>
-              Identity documents you upload are used only for verification by platform admins and
-              are not shared with other users.
+              Identity documents you upload are used only by the platform for verification and are
+              not shared with other users.
             </p>
           </div>
         )}
@@ -299,7 +321,7 @@ export function AccountPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Faq
               q="How is interest calculated?"
-              a="Interest accrues daily on your principal, compounding at the annual rate set by the admin."
+              a="Interest accrues daily on your principal, compounding at the annual rate set by the platform."
             />
             <Faq
               q="How do I qualify for a loan?"
@@ -307,11 +329,11 @@ export function AccountPage() {
             />
             <Faq
               q="How does loan repayment work?"
-              a="Once fully funded, interest accrues daily on the outstanding balance. Repayments are applied immediately, but an admin must approve each one before funders are credited."
+              a="Once fully funded, interest accrues daily on the outstanding balance. Repayments are applied immediately, then held awaiting approval before funders are credited."
             />
             <Faq
               q="Why verify identity?"
-              a="Verified members can access higher invest and borrow limits. You upload your name, ID number, selfie, and both sides of your ID for admin review."
+              a="Verified members can access higher invest and borrow limits. You upload your name, ID number, selfie, and both sides of your ID for platform verification."
             />
           </div>
         )}
