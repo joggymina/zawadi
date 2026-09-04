@@ -31,6 +31,11 @@ export function AdminPage() {
   const [fundingClosed, setFundingClosed] = useState<
     Awaited<ReturnType<typeof adminApi.listFundingWindowClosed>>
   >([]);
+  /** loanId → which panel is open: null | "extend" | "fund" */
+  const [closedPanel, setClosedPanel] = useState<Record<string, "extend" | "fund" | null>>({});
+  const [extendHours, setExtendHours] = useState<Record<string, string>>({});
+  const [extendMins, setExtendMins] = useState<Record<string, string>>({});
+  const [fundAmounts, setFundAmounts] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [error, setError] = useState("");
@@ -124,7 +129,25 @@ export function AdminPage() {
     });
   }
 
-  function extendFunding(loanId: string, borrower: string, extraMinutes: number, label: string) {
+  function toggleClosedPanel(loanId: string, panel: "extend" | "fund") {
+    setClosedPanel((prev) => ({
+      ...prev,
+      [loanId]: prev[loanId] === panel ? null : panel,
+    }));
+  }
+
+  function submitExtend(loanId: string, borrower: string) {
+    const h = parseInt(extendHours[loanId] ?? "0", 10) || 0;
+    const m = parseInt(extendMins[loanId] ?? "0", 10) || 0;
+    const extraMinutes = h * 60 + m;
+    if (extraMinutes < 1) {
+      showToast("Enter at least 1 minute to extend");
+      return;
+    }
+    const parts: string[] = [];
+    if (h > 0) parts.push(`${h} hour${h === 1 ? "" : "s"}`);
+    if (m > 0) parts.push(`${m} minute${m === 1 ? "" : "s"}`);
+    const label = parts.join(" ");
     setConfirm({
       title: "Extend funding window?",
       body: `Put @${borrower}'s loan back on the marketplace for ${label}. Members can fund again until the new close time.`,
@@ -132,6 +155,35 @@ export function AdminPage() {
       onConfirm: async () => {
         await adminApi.extendFundingWindow(loanId, extraMinutes);
         showToast(`Funding window extended by ${label}`);
+        setClosedPanel((p) => ({ ...p, [loanId]: null }));
+        await load();
+      },
+    });
+  }
+
+  function submitAdminFund(loanId: string, borrower: string, remaining: number) {
+    const raw = fundAmounts[loanId] ?? String(remaining);
+    const amount = parseFloat(raw);
+    if (Number.isNaN(amount) || amount <= 0) {
+      showToast("Enter a valid fund amount");
+      return;
+    }
+    if (amount > remaining + 0.001) {
+      showToast(`Only ${fmt(remaining)} still needed`);
+      return;
+    }
+    setConfirm({
+      title: "Fund this loan?",
+      body: `Fund ${fmt(amount)} toward @${borrower}'s loan from your admin investment balance. Funding window is closed for members; this uses platform/admin capital.`,
+      confirmLabel: "Fund",
+      onConfirm: async () => {
+        const updated = await adminApi.adminFundClosedLoan(loanId, amount);
+        showToast(
+          updated.status === "REPAYING"
+            ? `Fully funded — loan is now repaying`
+            : `Funded ${fmt(amount)}`,
+        );
+        setClosedPanel((p) => ({ ...p, [loanId]: null }));
         await load();
       },
     });
@@ -288,11 +340,13 @@ export function AdminPage() {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {fundingClosed.map((l) => {
-              const remaining = Number(l.amount) - Number(l.fundedAmount);
+              const remaining = Math.max(0, Number(l.amount) - Number(l.fundedAmount));
+              const panel = closedPanel[l.id] ?? null;
+              const borrower = l.borrower?.username ?? "borrower";
               return (
                 <div key={l.id} className="card" style={{ padding: "10px 12px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                    <span>@{l.borrower?.username ?? "borrower"}</span>
+                    <span>@{borrower}</span>
                     <span className="mono">
                       {fmt(l.fundedAmount)} / {fmt(l.amount)}
                     </span>
@@ -302,50 +356,126 @@ export function AdminPage() {
                     {l.fundingClosesAt ? new Date(l.fundingClosesAt).toLocaleString() : "—"}
                     {remaining > 0 ? ` · ${fmt(remaining)} still needed` : ""}
                   </div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+
+                  <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                     <button
                       className="btn btn-outline"
-                      style={{ padding: "7px 10px", fontSize: 12 }}
-                      onClick={() =>
-                        extendFunding(
-                          l.id,
-                          l.borrower?.username ?? "borrower",
-                          60,
-                          "1 hour",
-                        )
-                      }
+                      style={{ padding: "7px 12px", fontSize: 12 }}
+                      onClick={() => toggleClosedPanel(l.id, "extend")}
                     >
-                      +1 hour
+                      {panel === "extend" ? "Hide extend ▴" : "Extend window ▾"}
                     </button>
-                    <button
-                      className="btn btn-outline"
-                      style={{ padding: "7px 10px", fontSize: 12 }}
-                      onClick={() =>
-                        extendFunding(
-                          l.id,
-                          l.borrower?.username ?? "borrower",
-                          24 * 60,
-                          "24 hours",
-                        )
-                      }
-                    >
-                      +24 hours
-                    </button>
-                    <button
-                      className="btn btn-primary"
-                      style={{ padding: "7px 10px", fontSize: 12 }}
-                      onClick={() =>
-                        extendFunding(
-                          l.id,
-                          l.borrower?.username ?? "borrower",
-                          72 * 60,
-                          "72 hours",
-                        )
-                      }
-                    >
-                      +72 hours
-                    </button>
+                    {remaining > 0 && (
+                      <button
+                        className="btn btn-primary"
+                        style={{ padding: "7px 12px", fontSize: 12 }}
+                        onClick={() => {
+                          setFundAmounts((a) => ({
+                            ...a,
+                            [l.id]: a[l.id] ?? String(remaining),
+                          }));
+                          toggleClosedPanel(l.id, "fund");
+                        }}
+                      >
+                        {panel === "fund" ? "Hide fund ▴" : "Fund remainder ▾"}
+                      </button>
+                    )}
                   </div>
+
+                  {panel === "extend" && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 12,
+                        background: "var(--bg)",
+                        borderRadius: 10,
+                        border: "1px solid var(--line)",
+                      }}
+                    >
+                      <div style={{ fontSize: 12.5, fontWeight: 500, marginBottom: 8 }}>
+                        Add time back on the marketplace
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <input
+                          className="field-input mono"
+                          type="number"
+                          min={0}
+                          placeholder="Hours"
+                          value={extendHours[l.id] ?? ""}
+                          onChange={(e) =>
+                            setExtendHours((h) => ({ ...h, [l.id]: e.target.value }))
+                          }
+                          style={{ width: 88, padding: "8px 10px", fontSize: 13 }}
+                        />
+                        <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>h</span>
+                        <input
+                          className="field-input mono"
+                          type="number"
+                          min={0}
+                          max={59}
+                          placeholder="Minutes"
+                          value={extendMins[l.id] ?? ""}
+                          onChange={(e) =>
+                            setExtendMins((m) => ({ ...m, [l.id]: e.target.value }))
+                          }
+                          style={{ width: 88, padding: "8px 10px", fontSize: 13 }}
+                        />
+                        <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>min</span>
+                        <button
+                          className="btn btn-primary"
+                          style={{ padding: "8px 14px", fontSize: 12.5 }}
+                          onClick={() => submitExtend(l.id, borrower)}
+                        >
+                          Submit
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {panel === "fund" && remaining > 0 && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 12,
+                        background: "var(--bg)",
+                        borderRadius: 10,
+                        border: "1px solid var(--line)",
+                      }}
+                    >
+                      <div style={{ fontSize: 12.5, fontWeight: 500, marginBottom: 8 }}>
+                        Fund from admin balance (max {fmt(remaining)})
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <input
+                          className="field-input mono"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={fundAmounts[l.id] ?? String(remaining)}
+                          onChange={(e) =>
+                            setFundAmounts((a) => ({ ...a, [l.id]: e.target.value }))
+                          }
+                          style={{ flex: 1, minWidth: 120, padding: "8px 10px", fontSize: 13 }}
+                        />
+                        <button
+                          className="btn btn-outline"
+                          style={{ padding: "8px 12px", fontSize: 12 }}
+                          onClick={() =>
+                            setFundAmounts((a) => ({ ...a, [l.id]: String(remaining) }))
+                          }
+                        >
+                          Max
+                        </button>
+                        <button
+                          className="btn btn-primary"
+                          style={{ padding: "8px 14px", fontSize: 12.5 }}
+                          onClick={() => submitAdminFund(l.id, borrower, remaining)}
+                        >
+                          Fund
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

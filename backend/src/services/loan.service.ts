@@ -290,7 +290,7 @@ export async function listPendingGuarantees(guarantorId: string) {
   });
 }
 
-export async function fundLoan(params: { loanId: string; funderId: string; amount: number }) {
+export async function fundLoan(params: { loanId: string; funderId: string; amount: number; allowClosedWindow?: boolean }) {
   const amount = new Decimal(params.amount);
   await assertCanDebitPrincipal(params.funderId, amount);
 
@@ -304,7 +304,11 @@ export async function fundLoan(params: { loanId: string; funderId: string; amoun
     if (!loan) throw new AppError("Loan not found.", 404);
     if (loan.status !== "OPEN") throw new AppError("This loan is not open for funding.", 422);
     const closesAt = (loan as { fundingClosesAt?: Date | null }).fundingClosesAt;
-    if (closesAt && closesAt.getTime() <= Date.now()) {
+    if (
+      !params.allowClosedWindow &&
+      closesAt &&
+      closesAt.getTime() <= Date.now()
+    ) {
       throw new AppError("Funding window has closed for this loan.", 422);
     }
     if (loan.borrowerId === params.funderId) {

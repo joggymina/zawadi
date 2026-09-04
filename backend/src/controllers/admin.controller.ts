@@ -315,3 +315,36 @@ export async function extendFundingWindow(req: Request, res: Response) {
   });
   return res.json(updated);
 }
+
+
+export const adminFundSchema = z.object({
+  amount: z.number().positive().max(10_000_000),
+});
+
+/** Fund a closed-window OPEN loan from the admin's own investment balance. */
+export async function adminFundClosedLoan(req: Request, res: Response) {
+  const { amount } = req.body as { amount: number };
+  const loan = await prisma.loan.findUnique({ where: { id: req.params.id } });
+  if (!loan) throw new AppError("Loan not found.", 404);
+  if (loan.status !== "OPEN") throw new AppError("Loan is not open for funding.", 422);
+
+  const updated = await loanService.fundLoan({
+    loanId: req.params.id,
+    funderId: req.user!.id,
+    amount,
+    allowClosedWindow: true,
+  });
+
+  await writeAudit({
+    userId: req.user!.id,
+    action: "ADMIN_FUND_CLOSED_LOAN",
+    metadata: {
+      loanId: updated.id,
+      amount,
+      status: updated.status,
+      fundedAmount: String(updated.fundedAmount),
+    },
+    ip: req.ip,
+  });
+  return res.json(updated);
+}

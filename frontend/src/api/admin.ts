@@ -198,3 +198,13 @@ export function extendFundingWindow(loanId: string, extraMinutes: number) {
     { method: "POST", body: { extraMinutes } },
   );
 }
+
+
+export function adminFundClosedLoan(loanId: string, amount: number) {
+  return request<{
+    id: string;
+    status: string;
+    fundedAmount: string;
+    amount: string;
+  }>(`/api/admin/loans/${loanId}/fund`, { method: "POST", body: { amount } });
+}

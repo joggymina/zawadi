@@ -26,6 +26,8 @@ import {
   listFundingWindowClosed,
   extendFundingWindow,
   extendFundingSchema,
+  adminFundClosedLoan,
+  adminFundSchema,
 } from "../controllers/admin.controller";
 import {
   listAdminPackages,
@@ -76,6 +78,11 @@ router.post(
   "/loans/:id/extend-funding",
   validateBody(extendFundingSchema),
   asyncHandler(extendFundingWindow),
+);
+router.post(
+  "/loans/:id/fund",
+  validateBody(adminFundSchema),
+  asyncHandler(adminFundClosedLoan),
 );
 
 export default router;
