@@ -334,17 +334,20 @@ export function AccountPage() {
               repaid or cancelled. If the borrower defaults, recovery uses the borrower&apos;s
               available balance first, then held guarantor coverage, to credit funders. Daily
               interest and fees can still change what is owed over time, so funders should treat
-              lending as may carrying some residual risk even with these controls.
+              lending as carrying some residual risk even with these controls.
             </p>
             <p style={{ marginTop: 10 }}>
               Identity documents you upload are used only by the platform for verification and are
-              not shared.
+              not shared with other users.
             </p>
           </div>
         )}
 
         {panel === "faq" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div
+            className="card"
+            style={{ padding: "8px 16px 12px", display: "flex", flexDirection: "column", gap: 2 }}
+          >
             <Faq
               q="How is interest calculated?"
               a="Interest accrues daily on your principal, compounding at the annual rate set by the platform."
@@ -423,10 +426,57 @@ export function AccountPage() {
 }
 
 function Faq({ q, a }: { q: string; a: string }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <div>
-      <div style={{ fontSize: 14, fontWeight: 500 }}>{q}</div>
-      <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 4, lineHeight: 1.6 }}>{a}</div>
+    <div
+      style={{
+        borderBottom: "1px solid var(--line)",
+        paddingBottom: 10,
+        paddingTop: 8,
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          width: "100%",
+          gap: 10,
+          background: "none",
+          border: "none",
+          padding: "4px 0",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+        aria-expanded={open}
+      >
+        <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: "var(--ink)" }}>{q}</span>
+        <span
+          style={{
+            fontSize: 12,
+            color: "var(--ink-soft)",
+            transform: open ? "rotate(180deg)" : "none",
+            transition: "transform 0.15s ease",
+          }}
+        >
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          style={{
+            fontSize: 13,
+            color: "var(--ink-soft)",
+            marginTop: 6,
+            lineHeight: 1.6,
+            paddingRight: 8,
+          }}
+        >
+          {a}
+        </div>
+      )}
     </div>
   );
 }
