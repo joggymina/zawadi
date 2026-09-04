@@ -305,10 +305,29 @@ export function AccountPage() {
 
         {panel === "terms" && (
           <div style={{ fontSize: 13.5, lineHeight: 1.7, color: "var(--ink-soft)" }}>
+            <p style={{ fontWeight: 500, color: "var(--ink)", marginBottom: 8 }}>
+              How your money works on Zawadi
+            </p>
             <p>
-              Investing carries risk, and past performance doesn&apos;t guarantee future results.
-              Loans funded through the marketplace are backed by guarantor verification, not a
-              formal credit check, and repayment isn&apos;t guaranteed.
+              When you invest, funds sit in your investment balance and can earn daily interest.
+              That balance stays yours until you choose to fund a loan on the marketplace.
+            </p>
+            <p style={{ marginTop: 10 }}>
+              Funding a loan commits part of your balance to that loan. When the borrower repays,
+              the platform credits repayments to funders according to each funder&apos;s share. A
+              portion of loan interest may be retained by the platform as a service fee, as
+              configured in platform settings.
+            </p>
+            <p style={{ marginTop: 10 }}>
+              If a loan does not raise enough funding while it is open, money you did not commit is
+              never taken from your balance. Only amounts you successfully fund are tied to that
+              loan.
+            </p>
+            <p style={{ marginTop: 10 }}>
+              Loans are supported by guarantors, not a formal credit check. Guarantors&apos; pledged
+              coverage can be used if a borrower defaults, to help repay funders. Even with these
+              protections, repayment is not guaranteed in every case—especially if amounts owed
+              exceed what the borrower and guarantors can cover.
             </p>
             <p style={{ marginTop: 10 }}>
               Identity documents you upload are used only by the platform for verification and are
@@ -324,12 +343,20 @@ export function AccountPage() {
               a="Interest accrues daily on your principal, compounding at the annual rate set by the platform."
             />
             <Faq
+              q="Is my investment balance locked?"
+              a="No. It stays in your account and can earn interest until you fund a loan. Amounts pledged as a guarantor may be held until that loan is repaid or cancelled."
+            />
+            <Faq
               q="How do I qualify for a loan?"
               a="You need a set number of guarantors who are active investors. Their invested principal, added together, must cover the loan amount plus the required buffer."
             />
             <Faq
+              q="What if a loan doesn’t get fully funded?"
+              a="Only amounts you successfully fund are committed to that loan. Money you never committed stays in your investment balance."
+            />
+            <Faq
               q="How does loan repayment work?"
-              a="Once fully funded, interest accrues daily on the outstanding balance. Repayments are applied immediately, then held awaiting approval before funders are credited."
+              a="Once fully funded, interest accrues daily on the outstanding balance. Repayments are applied immediately, then held awaiting approval before funders are credited by share. The platform may keep a configured share of loan interest."
             />
             <Faq
               q="Why verify identity?"
