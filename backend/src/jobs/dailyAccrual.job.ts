@@ -3,7 +3,6 @@ import { prisma } from "../lib/prisma";
 import { annualToDaily, compoundInterest, wholeDaysBetween, roundMoney, dailyTermAccrualSlice , wholeHoursBetween, hourlyTermAccrualSlice } from "../utils/money";
 import { getAdminSettings } from "../services/adminSettings.service";
 import { runDefaultSettlements } from "../services/defaultSettlement.service";
-import { interestForPackageTier } from "../services/loan.service";
 
 export async function runDailyAccrual() {
   const settings = await getAdminSettings();
@@ -40,37 +39,20 @@ export async function runDailyAccrual() {
     });
   }
 
-    // Borrower loans — package-tier interest (match elapsed time to a package duration).
-  // Not hourly pro-rata; interest is the full rate of the matched duration band.
-  const packages = await prisma.loanPackage.findMany({ orderBy: { durationHours: "asc" } });
+    // Borrower loans — keep full selected-package interest on the books.
+  // (Early-repay tier discount is applied only at repay time.)
+  const { termInterestTotal } = await import("../utils/money");
   const loans = await prisma.loan.findMany({
     where: { status: "REPAYING" },
     include: { package: true },
   });
   for (const loan of loans) {
-    if (!loan.disbursedAt) continue;
-    const elapsedHours = Math.max(
-      0,
-      (now.getTime() - loan.disbursedAt.getTime()) / (60 * 60 * 1000),
-    );
-    const loanPkg = loan.package
-      ? {
-          id: loan.package.id,
-          name: loan.package.name,
-          durationHours: loan.package.durationHours,
-          interestRateApr: loan.package.interestRateApr,
-        }
-      : null;
-    const { interest } = interestForPackageTier({
-      principal: loan.amount,
-      packages,
-      elapsedHours,
-      loanPackage: loanPkg,
-    });
-    if (!interest.eq(loan.interestOwed)) {
+    const rate = loan.package?.interestRateApr ?? loan.interestRateApr;
+    const full = termInterestTotal(loan.amount, rate);
+    if (!full.eq(loan.interestOwed)) {
       await prisma.loan.update({
         where: { id: loan.id },
-        data: { interestOwed: interest, lastAccrualAt: now },
+        data: { interestOwed: full, lastAccrualAt: now },
       });
     }
   }
