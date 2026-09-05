@@ -203,16 +203,13 @@ export function NewLoanModal({ settings, onClose, onSubmit }: NewLoanModalProps)
               </span>
             </div>
             <div style={{ fontSize: 11, color: "var(--ink-soft)", marginTop: 8, lineHeight: 1.45 }}>
-              Interest is a flat share of the amount for this package. It accrues evenly over the
-              term
-              {repaymentPreview.durationDays >= 1
-                ? ` (about ${fmt(repaymentPreview.perDay)} per day)`
-                : ""}
-              . Early repayment charges only the portion of interest for time used
+              Interest is a flat share of the amount for this package, charged from funding
+              through the package end (shown above as expected total).
+              If you repay earlier, you may pay a lower package band that matches time used
+              — the app will show “if you pay today” vs “full package to term”.
               {repaymentPreview.graceLabel
-                ? `; grace after due date: ${repaymentPreview.graceLabel}`
+                ? ` Grace after due date: ${repaymentPreview.graceLabel}.`
                 : ""}
-              .
             </div>
           </div>
         )}

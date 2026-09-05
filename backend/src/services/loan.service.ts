@@ -600,20 +600,31 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       payAmount = outstanding;
     }
 
-    // Repayment uses full principal (guarantor holds only block withdraw/fund).
+    // Repay from principal first, then interest balance. Holds only block withdraw/fund.
     const account = await tx.investmentAccount.findUniqueOrThrow({
       where: { userId: params.borrowerId },
     });
-    if (account.principalBalance.lessThan(payAmount)) {
-      throw new AppError(
-        `Insufficient principal balance. You have ${account.principalBalance.toFixed(2)}; this repayment needs ${payAmount.toFixed(2)}.`,
-        422,
-      );
+    const available = account.principalBalance.plus(account.interestBalance);
+    if (available.lessThan(payAmount)) {
+      // Allow clearing within 1.00 of available so dust does not block full repay.
+      if (payAmount.minus(available).lessThanOrEqualTo(1) && available.greaterThan(0)) {
+        payAmount = available.toDecimalPlaces(2);
+      } else {
+        throw new AppError(
+          `Insufficient balance. You have ${available.toFixed(2)} (principal ${account.principalBalance.toFixed(2)} + interest ${account.interestBalance.toFixed(2)}); this repayment needs ${payAmount.toFixed(2)}.`,
+          422,
+        );
+      }
     }
 
+    let fromPrincipal = Decimal.min(payAmount, account.principalBalance);
+    let fromInterest = payAmount.minus(fromPrincipal);
     await tx.investmentAccount.update({
       where: { userId: params.borrowerId },
-      data: { principalBalance: { decrement: payAmount } },
+      data: {
+        principalBalance: { decrement: fromPrincipal },
+        interestBalance: fromInterest.greaterThan(0) ? { decrement: fromInterest } : undefined,
+      },
     });
     const after = await tx.investmentAccount.findUniqueOrThrow({
       where: { userId: params.borrowerId },

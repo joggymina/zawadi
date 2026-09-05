@@ -77,7 +77,7 @@ export function HomePage() {
             <div className="mono" style={{ fontSize: 15, marginTop: 3 }}>{projectedDaily.toFixed(2)}</div>
           </div>
           <div>
-            <div style={{ fontSize: 11, opacity: 0.75 }}>Net rate p.a.</div>
+            <div style={{ fontSize: 11, opacity: 0.75 }}>Net rate of amount</div>
             <div className="mono" style={{ fontSize: 15, marginTop: 3 }}>{pct(settings.investAnnualRatePct)}</div>
           </div>
         </div>
@@ -114,7 +114,7 @@ export function HomePage() {
               <span style={{ fontSize: 13.5, fontWeight: 500 }}>@{l.borrower?.username}</span>
               <span className="mono" style={{ fontSize: 13.5 }}>{fmt(l.amount)}</span>
             </div>
-            <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>{l.purpose || "General purpose loan"} · {pct(l.interestRateApr)} p.a.</div>
+            <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 4 }}>{l.purpose || "General purpose loan"} · {pct(l.interestRateApr)} of amount</div>
             {l.fundingClosesAt && (
               <div style={{ fontSize: 11.5, color: "#b8860b", marginTop: 4, fontWeight: 500 }}>
                 {fundingCountdown(l.fundingClosesAt, nowTick)}

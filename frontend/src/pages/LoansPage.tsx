@@ -195,7 +195,7 @@ export function LoansPage() {
                   </div>
                   <div style={{ fontSize: 12, color: "var(--green-deep)", marginTop: 8 }}>
                     🛡 {l.guarantors.length}/{settings.guarantorsRequired} guarantors ·{" "}
-                    {pct(l.interestRateApr)} p.a.
+                    {pct(l.interestRateApr)} of amount
                   </div>
                   <div
                     style={{
@@ -278,7 +278,7 @@ export function LoansPage() {
                     </span>
                   </div>
                   <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4 }}>
-                    {l.purpose || "General purpose loan"} · {pct(l.interestRateApr)} p.a.
+                    {l.purpose || "General purpose loan"} · {pct(l.interestRateApr)} of amount
                     {l.package ? ` · ${l.package.name}` : ""}
                   </div>
                   {l.dueAt && l.status === "REPAYING" && (
@@ -373,7 +373,7 @@ export function LoansPage() {
                   </div>
                   <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4 }}>
                     {l.purpose || "General purpose loan"}
-                    {l.package ? ` · ${l.package.name}` : ""} · {pct(l.interestRateApr)} p.a.
+                    {l.package ? ` · ${l.package.name}` : ""} · {pct(l.interestRateApr)} of amount
                   </div>
                   <div
                     style={{
@@ -529,13 +529,12 @@ export function LoansPage() {
                           {l.interestTierName ? ` · ${l.interestTierName}` : ""}
                           {l.interestTierRatePct ? ` (${l.interestTierRatePct}%)` : ""}
                         </div>
-                        {l.fullPackageTotal != null &&
-                          Number(l.fullPackageTotal) > outstanding + 0.009 && (
+                        {l.fullPackageTotal != null && (
                           <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
                             Full package to term: {fmt(l.fullPackageTotal)}
-                            {Number(l.earlySave ?? 0) > 0
+                            {Number(l.earlySave ?? 0) > 0.009
                               ? ` · pay now and save ${fmt(l.earlySave)}`
-                              : ""}
+                              : " · same as paying today"}
                           </div>
                         )}
                         {pendingRepay > 0 && (
