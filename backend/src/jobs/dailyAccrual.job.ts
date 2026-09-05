@@ -48,7 +48,7 @@ export async function runDailyAccrual() {
   });
   for (const loan of loans) {
     const rate = loan.package?.interestRateApr ?? loan.interestRateApr;
-    const full = termInterestTotal(loan.amount, rate);
+    const full = termInterestTotal(loan.principalOwed, rate);
     if (!full.eq(loan.interestOwed)) {
       await prisma.loan.update({
         where: { id: loan.id },

@@ -103,13 +103,17 @@ export function computeLoanOutstanding(
         }
       : null;
 
-  // Full interest for the package the borrower selected — owed from start to end.
-  const fullPackageInterest = loanPackage
-    ? termInterestTotal(
-        new Decimal(loan.amount.toString()),
-        new Decimal(loanPackage.interestRateApr.toString()),
-      ).toDecimalPlaces(2)
-    : storedInterest;
+  // Interest is always based on **remaining principal** (principalOwed), not the
+  // original loan amount. After partial repayment, interest shrinks with principal.
+  const principalBase = principalDue.greaterThan(0) ? principalDue : new Decimal(0);
+
+  const fullPackageInterest =
+    loanPackage && principalBase.greaterThan(0)
+      ? termInterestTotal(
+          principalBase,
+          new Decimal(loanPackage.interestRateApr.toString()),
+        ).toDecimalPlaces(2)
+      : new Decimal(0);
 
   let interestDue = fullPackageInterest;
   let matchedTier: PackageTier | null = loanPackage;
@@ -118,23 +122,27 @@ export function computeLoanOutstanding(
     : new Decimal(0);
 
   // Early repay path only: charge the tier that matches time used (may be lower).
-  if (opts?.earlyRepay && loan.disbursedAt && loanPackage) {
+  if (opts?.earlyRepay && loan.disbursedAt && loanPackage && principalBase.greaterThan(0)) {
     const elapsedHours = Math.max(
       0,
       (now.getTime() - new Date(loan.disbursedAt).getTime()) / (60 * 60 * 1000),
     );
     if (elapsedHours < loanPackage.durationHours) {
       const result = interestForPackageTier({
-        principal: new Decimal(loan.amount.toString()),
+        principal: principalBase,
         packages,
         elapsedHours,
         loanPackage,
       });
-      // Never charge more than the selected package.
+      // Never charge more than the selected package rate on remaining principal.
       interestDue = Decimal.min(result.interest, fullPackageInterest).toDecimalPlaces(2);
       matchedTier = result.tier;
       ratePct = result.ratePct;
     }
+  }
+
+  if (principalBase.lessThanOrEqualTo(0)) {
+    interestDue = new Decimal(0);
   }
 
   return {
@@ -740,16 +748,36 @@ export async function approveRepayment(params: { repaymentId: string; adminId: s
     }
 
     const loan = repayment.loan;
-    // Owed was not reduced at repay-submit time — reduce now on approval.
+    // Owed was not reduced at repay-submit time — reduce principal now on approval.
     const newPrincipal = Decimal.max(
       0,
       loan.principalOwed.minus(principalPart),
     ).toDecimalPlaces(2);
-    const newInterest = Decimal.max(
-      0,
-      loan.interestOwed.minus(interestPart),
-    ).toDecimalPlaces(2);
-    // All cents accounted for — no write-offs. Fully repaid only when both sides are zero.
+
+    // Interest on whatever principal remains (package / early-tier), not leftover of original fee.
+    let newInterest = new Decimal(0);
+    if (newPrincipal.greaterThan(0)) {
+      const packages = await tx.loanPackage.findMany({ orderBy: { durationHours: "asc" } });
+      const loanFull = await tx.loan.findUnique({
+        where: { id: loan.id },
+        include: { package: true },
+      });
+      const due = computeLoanOutstanding(
+        {
+          amount: loanFull!.amount,
+          principalOwed: newPrincipal,
+          interestOwed: new Decimal(0),
+          interestRateApr: loanFull!.interestRateApr,
+          disbursedAt: loanFull!.disbursedAt,
+          package: loanFull!.package,
+        },
+        packages,
+        new Date(),
+        { earlyRepay: true },
+      );
+      newInterest = due.interestDue;
+    }
+
     const fullyRepaid =
       newPrincipal.lessThanOrEqualTo(0) && newInterest.lessThanOrEqualTo(0);
 
