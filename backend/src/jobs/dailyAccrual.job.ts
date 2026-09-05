@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { annualToDaily, compoundInterest, wholeDaysBetween, roundMoney, dailyTermAccrualSlice , wholeHoursBetween, hourlyTermAccrualSlice } from "../utils/money";
 import { getAdminSettings } from "../services/adminSettings.service";
 import { runDefaultSettlements } from "../services/defaultSettlement.service";
+import { interestForPackageTier } from "../services/loan.service";
 
 export async function runDailyAccrual() {
   const settings = await getAdminSettings();
@@ -39,43 +40,39 @@ export async function runDailyAccrual() {
     });
   }
 
-  // Borrower loans — flat term interest, stepped once per completed hour.
-  // Full term interest = principal × interestRateApr% (term rate, not p.a.).
-  // Each hour adds (totalTermInterest / durationHours), capped at total.
+    // Borrower loans — package-tier interest (match elapsed time to a package duration).
+  // Not hourly pro-rata; interest is the full rate of the matched duration band.
+  const packages = await prisma.loanPackage.findMany({ orderBy: { durationHours: "asc" } });
   const loans = await prisma.loan.findMany({
     where: { status: "REPAYING" },
     include: { package: true },
   });
   for (const loan of loans) {
-    const from = loan.lastAccrualAt ?? loan.disbursedAt;
-    if (!from) continue;
-    const hours = wholeHoursBetween(from, now);
-    if (hours <= 0) continue;
-
-    const durationHours = loan.package?.durationHours ?? 24 * 7;
-    const gainedDecimal = hourlyTermAccrualSlice({
+    if (!loan.disbursedAt) continue;
+    const elapsedHours = Math.max(
+      0,
+      (now.getTime() - loan.disbursedAt.getTime()) / (60 * 60 * 1000),
+    );
+    const loanPkg = loan.package
+      ? {
+          id: loan.package.id,
+          name: loan.package.name,
+          durationHours: loan.package.durationHours,
+          interestRateApr: loan.package.interestRateApr,
+        }
+      : null;
+    const { interest } = interestForPackageTier({
       principal: loan.amount,
-      ratePct: loan.interestRateApr,
-      durationHours,
-      wholeHours: hours,
-      interestAlreadyOwed: loan.interestOwed,
+      packages,
+      elapsedHours,
+      loanPackage: loanPkg,
     });
-    const newLastAccrual = new Date(from.getTime() + hours * 60 * 60 * 1000);
-    if (gainedDecimal.lessThanOrEqualTo(0)) {
+    if (!interest.eq(loan.interestOwed)) {
       await prisma.loan.update({
         where: { id: loan.id },
-        data: { lastAccrualAt: newLastAccrual },
+        data: { interestOwed: interest, lastAccrualAt: now },
       });
-      continue;
     }
-
-    await prisma.loan.update({
-      where: { id: loan.id },
-      data: {
-        interestOwed: { increment: gainedDecimal },
-        lastAccrualAt: newLastAccrual,
-      },
-    });
   }
 
   await runDefaultSettlements(now);

@@ -81,24 +81,30 @@ export async function listMine(req: Request, res: Response) {
     orderBy: { createdAt: "desc" },
   });
 
-  // totalDue from stored balances only (matches /repay exactly).
+  // Package-tier interest (same formula as /repay).
+  const packages = await prisma.loanPackage.findMany({ orderBy: { durationHours: "asc" } });
+  const now = new Date();
   const enriched = loans.map((loan) => {
     if (loan.status !== "REPAYING" && loan.status !== "DEFAULTED") {
       return {
         ...loan,
         totalDue: null as string | null,
         amountDueNow: null as string | null,
+        interestTierName: null as string | null,
       };
     }
-    const due = computeLoanOutstanding(loan);
+    const due = computeLoanOutstanding(loan, packages, now);
     const pending = (loan.repayments ?? [])
       .filter((r) => r.status === "PENDING")
       .reduce((s, r) => s + Number(r.amount), 0);
     const totalDueNum = Math.max(0, Number(due.totalDue) - pending);
     return {
       ...loan,
+      interestOwed: due.interestDue.toFixed(2),
       totalDue: due.totalDue.toFixed(2),
       amountDueNow: totalDueNum.toFixed(2),
+      interestTierName: due.matchedTier?.name ?? null,
+      interestTierRatePct: due.matchedRatePct.toFixed(3),
     };
   });
 

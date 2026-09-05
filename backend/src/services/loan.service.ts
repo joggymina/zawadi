@@ -5,7 +5,7 @@ import { assertCanDebitPrincipal } from "./guarantorHold.service";
 import { ensurePlatformUser, debitPlatform, ensurePlatformAccount, creditPlatformTx, getPlatformUserId, PLATFORM_USERNAME } from "./platform.service";
 import * as notifications from "./notification.service";
 import { Decimal } from "@prisma/client/runtime/library";
-import { linearInterestDue } from "../utils/money";
+import { termInterestTotal } from "../utils/money";
 
 const DAY_MS = 86_400_000;
 
@@ -14,57 +14,119 @@ function elapsedHoursBetween(from: Date, to: Date): number {
 }
 
 /**
- * Flat term interest: full term = principal × packageRate%.
- * Early repay charges the share for **completed whole hours** only
- * (floor(elapsed) / durationHours), capped at full term interest.
- * Updates at most once per hour — not continuous.
- * Field `interestRateApr` is the term rate (% of amount), not annual.
+ * Package-tier interest (not hourly pro-rata of the original package).
+ *
+ * When the borrower repays (or we show outstanding), elapsed time since
+ * disbursement is matched to a loan package by duration:
+ *   - find the shortest package whose durationHours >= elapsedHours
+ *   - if elapsed exceeds every package, use the loan's own package
+ * Interest due = principal × matchedPackage.rate%  (full tier fee, not hourly steps).
+ *
+ * Example: 180-day loan repaid after 10 hours → 12-hour package rate applies.
  */
-function applyEarlyRepayInterestCap(params: {
-  principal: Decimal;
-  interestOwed: Decimal;
-  ratePct: Decimal | number;
+export type PackageTier = {
+  id: string;
+  name: string;
   durationHours: number;
-  disbursedAt: Date | null;
-  now: Date;
-}) {
-  if (!params.disbursedAt) {
-    return { interestOwed: params.interestOwed, capped: false };
+  interestRateApr: Decimal | { toString(): string };
+};
+
+export function matchPackageTier(
+  packages: PackageTier[],
+  elapsedHours: number,
+  fallback: PackageTier | null,
+): PackageTier | null {
+  if (!packages.length) return fallback;
+  const sorted = [...packages].sort((a, b) => a.durationHours - b.durationHours);
+  const hours = Math.max(0, elapsedHours);
+  // Shortest package that fully covers time used.
+  const match = sorted.find((p) => p.durationHours >= hours);
+  if (match) return match;
+  // Past every published package duration → loan's own package (or longest).
+  return fallback ?? sorted[sorted.length - 1];
+}
+
+export function interestForPackageTier(params: {
+  principal: Decimal | number;
+  packages: PackageTier[];
+  elapsedHours: number;
+  loanPackage: PackageTier | null;
+}): { interest: Decimal; tier: PackageTier | null; ratePct: Decimal } {
+  const tier = matchPackageTier(params.packages, params.elapsedHours, params.loanPackage);
+  if (!tier) {
+    return { interest: new Decimal(0), tier: null, ratePct: new Decimal(0) };
   }
-  // Interest steps once per completed hour — not continuously by the second.
-  const hours = Math.floor(elapsedHoursBetween(params.disbursedAt, params.now));
-  const due = linearInterestDue({
-    principal: params.principal,
-    ratePct: params.ratePct,
-    durationHours: params.durationHours > 0 ? params.durationHours : 24,
-    elapsedHours: hours,
-  });
-  if (params.interestOwed.greaterThan(due)) {
-    return { interestOwed: due, capped: true };
-  }
-  // Catch up accrual lag (e.g. short package before first daily job).
-  if (params.interestOwed.lessThan(due)) {
-    return { interestOwed: due, capped: false };
-  }
-  return { interestOwed: params.interestOwed, capped: false };
+  const ratePct = new Decimal(tier.interestRateApr.toString());
+  const interest = termInterestTotal(params.principal, ratePct);
+  return { interest, tier, ratePct };
 }
 
 /**
- * Outstanding = stored principalOwed + interestOwed only.
- * Interest is raised only by the hourly accrual job — never recomputed on read/repay,
- * so the amount shown in the app always matches what /repay accepts.
+ * Outstanding = principalOwed + package-tier interest for time since disbursement.
+ * Interest does NOT tick every hour — it jumps when elapsed time crosses into
+ * the next package duration band.
  */
-export function computeLoanOutstanding(loan: {
-  principalOwed: Decimal | { toString(): string };
-  interestOwed: Decimal | { toString(): string };
-}) {
+export function computeLoanOutstanding(
+  loan: {
+    amount: Decimal | { toString(): string };
+    principalOwed: Decimal | { toString(): string };
+    interestOwed: Decimal | { toString(): string };
+    interestRateApr: Decimal | { toString(): string };
+    disbursedAt?: Date | null;
+    package?: { id: string; name: string; durationHours: number; interestRateApr: Decimal | { toString(): string } } | null;
+  },
+  packages: PackageTier[],
+  now = new Date(),
+) {
   const principalDue = new Decimal(loan.principalOwed.toString()).toDecimalPlaces(2);
-  const interestDue = new Decimal(loan.interestOwed.toString()).toDecimalPlaces(2);
+  const storedInterest = new Decimal(loan.interestOwed.toString()).toDecimalPlaces(2);
+
+  const loanPackage: PackageTier | null = loan.package
+    ? {
+        id: loan.package.id,
+        name: loan.package.name,
+        durationHours: loan.package.durationHours,
+        interestRateApr: loan.package.interestRateApr,
+      }
+    : loan.interestRateApr != null
+      ? {
+          id: "loan",
+          name: "Loan package",
+          durationHours: 24 * 365,
+          interestRateApr: loan.interestRateApr,
+        }
+      : null;
+
+  let interestDue = storedInterest;
+  let matchedTier: PackageTier | null = loanPackage;
+  let ratePct = loanPackage ? new Decimal(loanPackage.interestRateApr.toString()) : new Decimal(0);
+
+  if (loan.disbursedAt) {
+    const elapsedHours = Math.max(
+      0,
+      (now.getTime() - new Date(loan.disbursedAt).getTime()) / (60 * 60 * 1000),
+    );
+    const result = interestForPackageTier({
+      principal: new Decimal(loan.amount.toString()),
+      packages,
+      elapsedHours,
+      loanPackage,
+    });
+    interestDue = result.interest.toDecimalPlaces(2);
+    matchedTier = result.tier;
+    ratePct = result.ratePct;
+  } else if (loanPackage) {
+    // Not yet disbursed — show full selected package interest as expected cost.
+    interestDue = termInterestTotal(loan.amount, loanPackage.interestRateApr).toDecimalPlaces(2);
+  }
+
   return {
     principalDue,
     interestDue,
     totalDue: principalDue.plus(interestDue).toDecimalPlaces(2),
-    interestChanged: false,
+    interestChanged: !interestDue.eq(storedInterest),
+    matchedTier,
+    matchedRatePct: ratePct,
   };
 }
 
@@ -394,12 +456,36 @@ export async function fundLoan(params: {
       dueAt = new Date(Date.now() + loan.package.durationHours * 60 * 60 * 1000);
     }
 
+    let initialInterest: Decimal | undefined;
+    if (fullyFunded) {
+      const allPackages = await tx.loanPackage.findMany({
+        orderBy: { durationHours: "asc" },
+      });
+      const loanPkg = loan.package
+        ? {
+            id: loan.package.id,
+            name: loan.package.name,
+            durationHours: loan.package.durationHours,
+            interestRateApr: loan.package.interestRateApr,
+          }
+        : null;
+      // Just funded → elapsed ≈ 0 → shortest package tier applies.
+      const { interest } = interestForPackageTier({
+        principal: loan.amount,
+        packages: allPackages,
+        elapsedHours: 0,
+        loanPackage: loanPkg,
+      });
+      initialInterest = interest;
+    }
+
     const updatedLoan = await tx.loan.update({
       where: { id: loan.id },
       data: {
         fundedAmount: newFunded,
         status: fullyFunded ? "REPAYING" : "OPEN",
         principalOwed: fullyFunded ? loan.amount : loan.principalOwed,
+        interestOwed: fullyFunded && initialInterest ? initialInterest : undefined,
         lastAccrualAt: fullyFunded ? new Date() : loan.lastAccrualAt,
         disbursedAt: fullyFunded ? new Date() : loan.disbursedAt,
         dueAt: fullyFunded ? dueAt : loan.dueAt,
@@ -463,8 +549,7 @@ export async function fundLoan(params: {
 }
 
 export async function repayLoan(params: { loanId: string; borrowerId: string; amount: number }) {
-  const amount = new Decimal(params.amount);
-  const now = new Date();
+  const amount = new Decimal(Number(params.amount)).toDecimalPlaces(2);
 
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT id FROM "Loan" WHERE id = ${params.loanId} FOR UPDATE`;
@@ -477,8 +562,8 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     if (loan.borrowerId !== params.borrowerId) throw new AppError("This isn't your loan.", 403);
     if (loan.status !== "REPAYING") throw new AppError("This loan isn't awaiting repayment.", 422);
 
-    // Use stored balances only — same numbers the UI shows from listMine.
-    const due = computeLoanOutstanding(loan);
+    const packages = await tx.loanPackage.findMany({ orderBy: { durationHours: "asc" } });
+    const due = computeLoanOutstanding(loan, packages, new Date());
     const interestOwed = due.interestDue;
 
     const pending = await tx.loanRepayment.findMany({
@@ -511,13 +596,15 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       payAmount = outstanding;
     }
 
-    await assertCanDebitPrincipal(params.borrowerId, payAmount);
-
+    // Repayment uses full principal (guarantor holds only block withdraw/fund).
     const account = await tx.investmentAccount.findUniqueOrThrow({
       where: { userId: params.borrowerId },
     });
     if (account.principalBalance.lessThan(payAmount)) {
-      throw new AppError("Insufficient principal balance.", 422);
+      throw new AppError(
+        `Insufficient principal balance. You have ${account.principalBalance.toFixed(2)}; this repayment needs ${payAmount.toFixed(2)}.`,
+        422,
+      );
     }
 
     await tx.investmentAccount.update({
@@ -538,8 +625,13 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
       },
     });
 
-    // Do not change principalOwed / interestOwed until approval.
-    // Interest only moves on the hourly accrual job.
+    // Sync interest to the matched package tier before snapshotting repayment.
+    if (due.interestChanged) {
+      await tx.loan.update({
+        where: { id: loan.id },
+        data: { interestOwed },
+      });
+    }
 
     const repayment = await tx.loanRepayment.create({
       data: {

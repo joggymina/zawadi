@@ -98,6 +98,10 @@ export interface Loan {
   interestRateApr: string;
   principalOwed: string;
   interestOwed: string;
+  interestTierName?: string | null;
+  interestTierRatePct?: string | null;
+  totalDue?: string | null;
+  amountDueNow?: string | null;
   /** Server total due (principal + current interest), same as repay uses. */
   totalDue?: string | null;
   /** totalDue minus pending repayments. */
