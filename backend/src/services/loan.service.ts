@@ -57,7 +57,7 @@ export function interestForPackageTier(params: {
     return { interest: new Decimal(0), tier: null, ratePct: new Decimal(0) };
   }
   const ratePct = new Decimal(tier.interestRateApr.toString());
-  const interest = termInterestTotal(params.principal, ratePct);
+  const interest = termInterestTotal(new Decimal(params.principal.toString()), ratePct);
   return { interest, tier, ratePct };
 }
 
@@ -105,7 +105,10 @@ export function computeLoanOutstanding(
 
   // Full interest for the package the borrower selected — owed from start to end.
   const fullPackageInterest = loanPackage
-    ? termInterestTotal(loan.amount, loanPackage.interestRateApr).toDecimalPlaces(2)
+    ? termInterestTotal(
+        new Decimal(loan.amount.toString()),
+        new Decimal(loanPackage.interestRateApr.toString()),
+      ).toDecimalPlaces(2)
     : storedInterest;
 
   let interestDue = fullPackageInterest;
@@ -474,7 +477,10 @@ export async function fundLoan(params: {
     if (fullyFunded) {
       // Full selected-package interest from funding through package end.
       const rate = loan.package?.interestRateApr ?? loan.interestRateApr;
-      initialInterest = termInterestTotal(loan.amount, rate);
+      initialInterest = termInterestTotal(
+        new Decimal(loan.amount.toString()),
+        new Decimal(rate.toString()),
+      );
     }
 
     const updatedLoan = await tx.loan.update({

@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import { prisma } from "../lib/prisma";
-import { annualToDaily, compoundInterest, wholeDaysBetween, roundMoney, dailyTermAccrualSlice , wholeHoursBetween, hourlyTermAccrualSlice } from "../utils/money";
+import { annualToDaily, compoundInterest, wholeDaysBetween, roundMoney, dailyTermAccrualSlice , wholeHoursBetween, hourlyTermAccrualSlice , termInterestTotal} from "../utils/money";
+// termInterestTotal used below
 import { getAdminSettings } from "../services/adminSettings.service";
 import { runDefaultSettlements } from "../services/defaultSettlement.service";
 
@@ -41,7 +42,6 @@ export async function runDailyAccrual() {
 
     // Borrower loans — keep full selected-package interest on the books.
   // (Early-repay tier discount is applied only at repay time.)
-  const { termInterestTotal } = await import("../utils/money");
   const loans = await prisma.loan.findMany({
     where: { status: "REPAYING" },
     include: { package: true },
