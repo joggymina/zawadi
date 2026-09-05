@@ -62,9 +62,14 @@ export function interestForPackageTier(params: {
 }
 
 /**
- * Outstanding = principalOwed + package-tier interest for time since disbursement.
- * Interest does NOT tick every hour — it jumps when elapsed time crosses into
- * the next package duration band.
+ * Outstanding = principalOwed + package interest.
+ *
+ * From funding through the end of the selected package duration, the borrower
+ * owes the **full selected package** interest (principal × package rate%).
+ * Interest is on the books from day one — not 0 until some hourly tick.
+ *
+ * Early repayment only: if repaid before the package ends, interest may be
+ * reduced to the package tier that matches time actually used (shorter band).
  */
 export function computeLoanOutstanding(
   loan: {
@@ -77,6 +82,7 @@ export function computeLoanOutstanding(
   },
   packages: PackageTier[],
   now = new Date(),
+  opts?: { earlyRepay?: boolean },
 ) {
   const principalDue = new Decimal(loan.principalOwed.toString()).toDecimalPlaces(2);
   const storedInterest = new Decimal(loan.interestOwed.toString()).toDecimalPlaces(2);
@@ -97,27 +103,35 @@ export function computeLoanOutstanding(
         }
       : null;
 
-  let interestDue = storedInterest;
-  let matchedTier: PackageTier | null = loanPackage;
-  let ratePct = loanPackage ? new Decimal(loanPackage.interestRateApr.toString()) : new Decimal(0);
+  // Full interest for the package the borrower selected — owed from start to end.
+  const fullPackageInterest = loanPackage
+    ? termInterestTotal(loan.amount, loanPackage.interestRateApr).toDecimalPlaces(2)
+    : storedInterest;
 
-  if (loan.disbursedAt) {
+  let interestDue = fullPackageInterest;
+  let matchedTier: PackageTier | null = loanPackage;
+  let ratePct = loanPackage
+    ? new Decimal(loanPackage.interestRateApr.toString())
+    : new Decimal(0);
+
+  // Early repay path only: charge the tier that matches time used (may be lower).
+  if (opts?.earlyRepay && loan.disbursedAt && loanPackage) {
     const elapsedHours = Math.max(
       0,
       (now.getTime() - new Date(loan.disbursedAt).getTime()) / (60 * 60 * 1000),
     );
-    const result = interestForPackageTier({
-      principal: new Decimal(loan.amount.toString()),
-      packages,
-      elapsedHours,
-      loanPackage,
-    });
-    interestDue = result.interest.toDecimalPlaces(2);
-    matchedTier = result.tier;
-    ratePct = result.ratePct;
-  } else if (loanPackage) {
-    // Not yet disbursed — show full selected package interest as expected cost.
-    interestDue = termInterestTotal(loan.amount, loanPackage.interestRateApr).toDecimalPlaces(2);
+    if (elapsedHours < loanPackage.durationHours) {
+      const result = interestForPackageTier({
+        principal: new Decimal(loan.amount.toString()),
+        packages,
+        elapsedHours,
+        loanPackage,
+      });
+      // Never charge more than the selected package.
+      interestDue = Decimal.min(result.interest, fullPackageInterest).toDecimalPlaces(2);
+      matchedTier = result.tier;
+      ratePct = result.ratePct;
+    }
   }
 
   return {
@@ -458,25 +472,9 @@ export async function fundLoan(params: {
 
     let initialInterest: Decimal | undefined;
     if (fullyFunded) {
-      const allPackages = await tx.loanPackage.findMany({
-        orderBy: { durationHours: "asc" },
-      });
-      const loanPkg = loan.package
-        ? {
-            id: loan.package.id,
-            name: loan.package.name,
-            durationHours: loan.package.durationHours,
-            interestRateApr: loan.package.interestRateApr,
-          }
-        : null;
-      // Just funded → elapsed ≈ 0 → shortest package tier applies.
-      const { interest } = interestForPackageTier({
-        principal: loan.amount,
-        packages: allPackages,
-        elapsedHours: 0,
-        loanPackage: loanPkg,
-      });
-      initialInterest = interest;
+      // Full selected-package interest from funding through package end.
+      const rate = loan.package?.interestRateApr ?? loan.interestRateApr;
+      initialInterest = termInterestTotal(loan.amount, rate);
     }
 
     const updatedLoan = await tx.loan.update({
@@ -563,7 +561,7 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     if (loan.status !== "REPAYING") throw new AppError("This loan isn't awaiting repayment.", 422);
 
     const packages = await tx.loanPackage.findMany({ orderBy: { durationHours: "asc" } });
-    const due = computeLoanOutstanding(loan, packages, new Date());
+    const due = computeLoanOutstanding(loan, packages, new Date(), { earlyRepay: true });
     const interestOwed = due.interestDue;
 
     const pending = await tx.loanRepayment.findMany({

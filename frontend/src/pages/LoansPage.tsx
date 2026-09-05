@@ -525,7 +525,8 @@ export function LoansPage() {
                           <span className="mono" style={{ fontWeight: 600 }}>{fmt(outstanding)}</span>
                         </div>
                         <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
-                          Includes principal and interest for this package term
+                          Principal {fmt(l.principalOwed)} + interest {fmt(l.interestOwed)}
+                          {" "}(full package rate from funding through package end)
                           {pendingRepay > 0
                             ? ` · ${fmt(pendingRepay)} already submitted (awaiting approval)`
                             : ""}

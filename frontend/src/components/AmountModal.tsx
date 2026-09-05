@@ -9,6 +9,8 @@ interface AmountModalProps {
   needsConfirm?: boolean;
   /** Extra line on the confirm step, e.g. "Pending admin approval". */
   confirmHint?: string;
+  /** Pre-fill the amount field (e.g. full outstanding). */
+  defaultAmount?: number;
   onClose: () => void;
   onSubmit: (amount: number) => Promise<unknown>;
 }
@@ -19,10 +21,13 @@ export function AmountModal({
   confirmLabel = "Confirm",
   needsConfirm = false,
   confirmHint,
+  defaultAmount,
   onClose,
   onSubmit,
 }: AmountModalProps) {
-  const [amount, setAmount] = useState("");
+  const [amount, setAmount] = useState(
+    defaultAmount != null && defaultAmount > 0 ? defaultAmount.toFixed(2) : "",
+  );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<"enter" | "confirm">("enter");
@@ -75,7 +80,9 @@ export function AmountModal({
         {step === "enter" && (
           <>
             {balanceLabel && (
-              <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 10 }}>{balanceLabel}</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 10, lineHeight: 1.45 }}>
+                {balanceLabel}
+              </div>
             )}
 
             <div style={{ marginTop: 16 }}>
@@ -89,6 +96,24 @@ export function AmountModal({
                 placeholder="0.00"
                 autoFocus
               />
+              {defaultAmount != null && defaultAmount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setAmount(defaultAmount.toFixed(2))}
+                  style={{
+                    marginTop: 8,
+                    background: "none",
+                    border: "none",
+                    color: "var(--green)",
+                    fontSize: 12.5,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                >
+                  Use full amount due ({defaultAmount.toFixed(2)})
+                </button>
+              )}
               {error && <div className="error-text">{error}</div>}
             </div>
 
