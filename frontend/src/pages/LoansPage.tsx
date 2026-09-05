@@ -549,18 +549,24 @@ export function LoansPage() {
                             and, if needed, guarantor holds.
                           </div>
                         )}
-                        {l.status === "REPAYING" && pendingRepay <= 0 && outstanding > 0 && (
+                        {l.status === "REPAYING" && outstanding > 0 && (
                           <button
                             className="btn btn-primary"
                             style={{ width: "100%", marginTop: 10, padding: "9px 0", fontSize: 12.5 }}
                             onClick={() => setRepayModal(l)}
                           >
-                            Pay amount due
+                            {pendingRepay > 0 ? "Pay remaining balance" : "Pay amount due"}
                           </button>
                         )}
-                        {l.status === "REPAYING" && pendingRepay > 0 && (
+                        {l.status === "REPAYING" && pendingRepay > 0 && outstanding > 0 && (
                           <div style={{ fontSize: 12, color: "#7a5a2e", marginTop: 10 }}>
-                            A repayment is waiting for confirmation. You can pay again after it is reviewed.
+                            A repayment is waiting for confirmation. You can submit another payment
+                            for the remaining balance if your account has enough funds.
+                          </div>
+                        )}
+                        {l.status === "REPAYING" && pendingRepay > 0 && outstanding <= 0 && (
+                          <div style={{ fontSize: 12, color: "#7a5a2e", marginTop: 10 }}>
+                            Submitted amounts cover what is due. Waiting for confirmation.
                           </div>
                         )}
                         {(l.repayments?.length ?? 0) > 0 && (

@@ -578,20 +578,25 @@ export async function repayLoan(params: { loanId: string; borrowerId: string; am
     const due = computeLoanOutstanding(loan, packages, new Date(), { earlyRepay: true });
     const interestOwed = due.interestDue;
 
+    // Allow another repayment while one is pending, as long as remaining due
+    // (after already-submitted amounts) is still positive.
     const pending = await tx.loanRepayment.findMany({
       where: { loanId: loan.id, status: "PENDING" },
       select: { id: true, amount: true },
     });
-    if (pending.length > 0) {
+    const pendingSum = pending.reduce(
+      (s, r) => s.plus(r.amount),
+      new Decimal(0),
+    );
+
+    const outstanding = Decimal.max(0, due.totalDue.minus(pendingSum)).toDecimalPlaces(2);
+    if (outstanding.lessThanOrEqualTo(0)) {
       throw new AppError(
-        "A repayment is already awaiting approval on this loan. Wait for it to be reviewed before submitting another.",
+        pendingSum.greaterThan(0)
+          ? "Submitted repayments already cover the full amount due. Wait for confirmation, or the remaining balance will clear when they are approved."
+          : "This loan has no outstanding balance.",
         422,
       );
-    }
-
-    const outstanding = due.totalDue;
-    if (outstanding.lessThanOrEqualTo(0)) {
-      throw new AppError("This loan has no outstanding balance.", 422);
     }
 
     let payAmount = amount.toDecimalPlaces(2);
