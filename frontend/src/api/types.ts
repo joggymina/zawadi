@@ -109,10 +109,6 @@ export interface Loan {
   fullPackageTotal?: string | null;
   fullPackageInterest?: string | null;
   earlySave?: string | null;
-  /** Server total due (principal + current interest), same as repay uses. */
-  totalDue?: string | null;
-  /** totalDue minus pending repayments. */
-  amountDueNow?: string | null;
   fundedAmount: string;
   createdAt: string;
   packageId?: string | null;
