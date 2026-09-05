@@ -77,12 +77,27 @@ export async function listPendingRepayments(_req: Request, res: Response) {
   const repayments = await prisma.loanRepayment.findMany({
     where: { status: "PENDING" },
     include: {
-      loan: { include: { borrower: { select: { username: true } } } },
+      loan: {
+        include: {
+          borrower: { select: { username: true } },
+          package: { select: { name: true, durationHours: true, interestRateApr: true } },
+        },
+      },
       distributions: { include: { funder: { select: { username: true } } } },
     },
     orderBy: { createdAt: "asc" },
   });
-  return res.json(repayments);
+  // Explicit split for approval UI (principal vs interest portions of this payment).
+  const enriched = repayments.map((r) => {
+    const interestPart = Math.min(Number(r.amount), Number(r.interestOwedBefore));
+    const principalPart = Math.max(0, Number(r.amount) - interestPart);
+    return {
+      ...r,
+      principalPart: principalPart.toFixed(2),
+      interestPart: interestPart.toFixed(2),
+    };
+  });
+  return res.json(enriched);
 }
 
 export async function approveRepayment(req: Request, res: Response) {

@@ -564,7 +564,7 @@ export function AdminPage() {
               padding: 12,
             }}
           >
-            Nothing waiting on approval right now.
+            Nothing waiting for confirmation right now.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -575,10 +575,17 @@ export function AdminPage() {
                   <span className="mono">{fmt(r.amount)}</span>
                 </div>
                 <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
-                  To be split:{" "}
-                  {r.distributions
-                    .map((d) => `@${d.funder?.username ?? d.funderId} ${fmt(d.amount)}`)
-                    .join(", ")}
+                  Split of this payment: principal {fmt((r as { principalPart?: string }).principalPart ?? 0)}
+                  {" · "}interest {fmt((r as { interestPart?: string }).interestPart ?? 0)}
+                  {r.loan?.package?.name ? ` · ${r.loan.package.name}` : ""}
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                  To be split to funders:{" "}
+                  {r.distributions.length
+                    ? r.distributions
+                        .map((d) => `@${d.funder?.username ?? d.funderId} ${fmt(d.amount)}`)
+                        .join(", ")
+                    : "calculated on approve"}
                 </div>
                 <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                   <button

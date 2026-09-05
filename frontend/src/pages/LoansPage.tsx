@@ -521,16 +521,29 @@ export function LoansPage() {
                         }}
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-                          <span style={{ color: "var(--ink-soft)" }}>Total amount due</span>
+                          <span style={{ color: "var(--ink-soft)" }}>If you pay today</span>
                           <span className="mono" style={{ fontWeight: 600 }}>{fmt(outstanding)}</span>
                         </div>
                         <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
                           Principal {fmt(l.principalOwed)} + interest {fmt(l.interestOwed)}
-                          {" "}(full package rate from funding through package end)
-                          {pendingRepay > 0
-                            ? ` · ${fmt(pendingRepay)} already submitted (awaiting approval)`
-                            : ""}
+                          {l.interestTierName ? ` · ${l.interestTierName}` : ""}
+                          {l.interestTierRatePct ? ` (${l.interestTierRatePct}%)` : ""}
                         </div>
+                        {l.fullPackageTotal != null &&
+                          Number(l.fullPackageTotal) > outstanding + 0.009 && (
+                          <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 }}>
+                            Full package to term: {fmt(l.fullPackageTotal)}
+                            {Number(l.earlySave ?? 0) > 0
+                              ? ` · pay now and save ${fmt(l.earlySave)}`
+                              : ""}
+                          </div>
+                        )}
+                        {pendingRepay > 0 && (
+                          <div style={{ fontSize: 11.5, color: "#7a5a2e", marginTop: 4 }}>
+                            {fmt(pendingRepay)} submitted · waiting for confirmation
+                            {outstanding <= 0 ? " · nothing left to pay" : ` · ${fmt(outstanding)} still open`}
+                          </div>
+                        )}
                         {l.status === "DEFAULTED" && (
                           <div style={{ fontSize: 11.5, color: "var(--rust)", marginTop: 6 }}>
                             Closed after default settlement. Funders were credited from your balance
@@ -548,7 +561,7 @@ export function LoansPage() {
                         )}
                         {l.status === "REPAYING" && pendingRepay > 0 && (
                           <div style={{ fontSize: 12, color: "#7a5a2e", marginTop: 10 }}>
-                            A repayment is awaiting approval. You can submit another after it is reviewed.
+                            A repayment is waiting for confirmation. You can pay again after it is reviewed.
                           </div>
                         )}
                         {(l.repayments?.length ?? 0) > 0 && (
@@ -625,7 +638,7 @@ export function LoansPage() {
 
       {repayModal && (
         <AmountModal
-          title="Repay loan"
+          title="Pay amount due"
           defaultAmount={(() => {
             if (repayModal.amountDueNow != null) {
               return Math.max(0, Number(repayModal.amountDueNow));
@@ -649,16 +662,32 @@ export function LoansPage() {
                         .filter((r) => r.status === "PENDING")
                         .reduce((s, r) => s + Number(r.amount), 0),
                   );
-            return `Total amount due (what you must pay to clear this loan): ${fmt(left)}. This is the same figure the server will accept.`;
+            const full = repayModal.fullPackageTotal != null
+              ? Number(repayModal.fullPackageTotal)
+              : null;
+            const save = Number(repayModal.earlySave ?? 0);
+            const lines = [
+              `Amount due if you pay today: ${fmt(left)} (principal ${fmt(repayModal.principalOwed)} + interest ${fmt(repayModal.interestOwed)}).`,
+            ];
+            if (full != null && full > left + 0.009) {
+              lines.push(`Full package to term: ${fmt(full)}.`);
+            }
+            if (save > 0.009) {
+              lines.push(`Paying now saves ${fmt(save)} versus holding to the full package.`);
+            }
+            if (repayModal.interestTierName) {
+              lines.push(`Rate band: ${repayModal.interestTierName}${repayModal.interestTierRatePct ? ` (${repayModal.interestTierRatePct}%)` : ""}.`);
+            }
+            return lines.join(" ");
           })()}
-          confirmLabel="Submit repayment"
+          confirmLabel="Submit payment"
           needsConfirm
-          confirmHint="Held awaiting approval. Prefer the full amount due so the loan clears in one step."
+          confirmHint="Held until payment is confirmed. Prefer the full amount due so the loan clears in one step."
           onClose={() => setRepayModal(null)}
           onSubmit={async (amt) => {
             await loansApi.repay(repayModal.id, amt);
             await load();
-            showToast(`Repayment of ${fmt(amt)} submitted — awaiting approval`);
+            showToast(`Payment of ${fmt(amt)} submitted — waiting for confirmation`);
             setRepayModal(null);
           }}
         />

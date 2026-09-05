@@ -86,8 +86,12 @@ export interface LoanRepayment {
   amount: string;
   status: RepaymentStatus;
   createdAt: string;
+  principalOwedBefore?: string;
+  interestOwedBefore?: string;
+  principalPart?: string;
+  interestPart?: string;
   distributions: RepaymentDistribution[];
-  loan?: { id: string; borrower?: { username: string } };
+  loan?: { id: string; borrower?: { username: string }; package?: { name: string } | null };
 }
 
 export interface Loan {
@@ -102,6 +106,9 @@ export interface Loan {
   interestTierRatePct?: string | null;
   totalDue?: string | null;
   amountDueNow?: string | null;
+  fullPackageTotal?: string | null;
+  fullPackageInterest?: string | null;
+  earlySave?: string | null;
   /** Server total due (principal + current interest), same as repay uses. */
   totalDue?: string | null;
   /** totalDue minus pending repayments. */

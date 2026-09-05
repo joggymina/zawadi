@@ -81,7 +81,7 @@ export async function listMine(req: Request, res: Response) {
     orderBy: { createdAt: "desc" },
   });
 
-  // Package-tier interest (same formula as /repay).
+  // Full package cost + amount due if paid today (early-tier). Same as /repay.
   const packages = await prisma.loanPackage.findMany({ orderBy: { durationHours: "asc" } });
   const now = new Date();
   const enriched = loans.map((loan) => {
@@ -90,21 +90,31 @@ export async function listMine(req: Request, res: Response) {
         ...loan,
         totalDue: null as string | null,
         amountDueNow: null as string | null,
+        fullPackageTotal: null as string | null,
+        fullPackageInterest: null as string | null,
+        earlySave: null as string | null,
         interestTierName: null as string | null,
+        interestTierRatePct: null as string | null,
       };
     }
-    const due = computeLoanOutstanding(loan, packages, now);
+    const full = computeLoanOutstanding(loan, packages, now);
+    const payable = computeLoanOutstanding(loan, packages, now, { earlyRepay: true });
     const pending = (loan.repayments ?? [])
       .filter((r) => r.status === "PENDING")
       .reduce((s, r) => s + Number(r.amount), 0);
-    const totalDueNum = Math.max(0, Number(due.totalDue) - pending);
+    const payNow = Math.max(0, Number(payable.totalDue) - pending);
+    const earlySave = Math.max(0, Number(full.interestDue) - Number(payable.interestDue));
     return {
       ...loan,
-      interestOwed: due.interestDue.toFixed(2),
-      totalDue: due.totalDue.toFixed(2),
-      amountDueNow: totalDueNum.toFixed(2),
-      interestTierName: due.matchedTier?.name ?? null,
-      interestTierRatePct: due.matchedRatePct.toFixed(3),
+      // Interest shown = what is due if paid today (matches /repay)
+      interestOwed: payable.interestDue.toFixed(2),
+      totalDue: payable.totalDue.toFixed(2),
+      amountDueNow: payNow.toFixed(2),
+      fullPackageInterest: full.interestDue.toFixed(2),
+      fullPackageTotal: full.totalDue.toFixed(2),
+      earlySave: earlySave.toFixed(2),
+      interestTierName: payable.matchedTier?.name ?? null,
+      interestTierRatePct: payable.matchedRatePct.toFixed(3),
     };
   });
 
