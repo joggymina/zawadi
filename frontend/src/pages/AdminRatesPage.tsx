@@ -35,6 +35,7 @@ export function AdminRatesPage() {
       guarantorCoverageExtraPct: number;
       withdrawFeePct: number;
       platformInterestSharePct: number;
+      paymentProvider: "HASHPAY" | "PAYHERO";
     }>,
   ) {
     try {
@@ -67,6 +68,45 @@ export function AdminRatesPage() {
       <div style={{ fontSize: 12.5, color: "var(--ink-soft)", lineHeight: 1.45 }}>
         Default loan rate is used by <strong>Reset to default</strong> on Loan packages. Package
         APRs for new loans are managed under Loan packages.
+      </div>
+
+
+      <div
+        className="card"
+        style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}
+      >
+        <div style={{ fontSize: 13, fontWeight: 600 }}>M-Pesa STK provider</div>
+        <div style={{ fontSize: 12, color: "var(--ink-soft)", lineHeight: 1.45 }}>
+          Choose which gateway sends the deposit STK prompt. Keep credentials for both in
+          server env; only the selected provider is used for new deposits. Webhooks for both
+          stay active so in-flight payments still complete.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {(["HASHPAY", "PAYHERO"] as const).map((p) => {
+            const active = String(settings.paymentProvider || "HASHPAY").toUpperCase() === p;
+            return (
+              <button
+                key={p}
+                type="button"
+                className="btn"
+                disabled={active}
+                style={{
+                  padding: "10px 16px",
+                  fontSize: 13,
+                  background: active ? "var(--green)" : "transparent",
+                  color: active ? "#f4fbf4" : "var(--ink)",
+                  border: `1px solid ${active ? "var(--green)" : "var(--line)"}`,
+                }}
+                onClick={async () => {
+                  await saveSettings({ paymentProvider: p });
+                }}
+              >
+                {p === "HASHPAY" ? "HashPay" : "PayHero"}
+                {active ? " · active" : ""}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

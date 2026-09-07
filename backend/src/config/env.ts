@@ -12,8 +12,13 @@ const envSchema = z.object({
   ADMIN_BOOTSTRAP_USERNAME: z.string().optional(),
   ADMIN_BOOTSTRAP_PASSWORD: z.string().optional(),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
+  // HashPay / HashBack (optional — used when paymentProvider = HASHPAY)
+  HASHPAY_API_KEY: z.string().optional(),
+  HASHPAY_ACCOUNT_ID: z.string().optional(),
+  HASHPAY_WEBHOOK_SECRET: z.string().optional(),
+  HASHPAY_BASE_URL: z.string().optional(),
 
-  // PayHero (optional at boot — deposit fails clearly if missing)
+  // PayHero (optional — used when paymentProvider = PAYHERO)
   PAYHERO_API_USERNAME: z.string().optional(),
   PAYHERO_API_PASSWORD: z.string().optional(),
   PAYHERO_BASIC_TOKEN: z.string().optional(),

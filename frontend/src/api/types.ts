@@ -129,6 +129,7 @@ export interface AdminSettings {
   guarantorCoverageExtraPct: string;
   withdrawFeePct: string;
   platformInterestSharePct: string;
+  paymentProvider?: "HASHPAY" | "PAYHERO" | string;
 }
 
 export interface Offer {

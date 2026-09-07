@@ -23,6 +23,7 @@ export function updateSettings(
     guarantorCoverageExtraPct: number;
     withdrawFeePct: number;
     platformInterestSharePct: number;
+    paymentProvider: "HASHPAY" | "PAYHERO";
   }>,
 ) {
   return request<AdminSettings>("/api/admin/settings", { method: "PUT", body: patch });

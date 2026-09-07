@@ -5,13 +5,15 @@ import { validateBody } from "../middleware/validate";
 import {
   startDeposit,
   getIntent,
+  hashpayCallback,
   payheroCallback,
   depositSchema,
 } from "../controllers/payment.controller";
 
 const router = Router();
 
-// Public — PayHero server → your API
+// Public webhooks — both stay registered; active STK provider is chosen in admin settings
+router.post("/hashpay/callback", asyncHandler(hashpayCallback));
 router.post("/payhero/callback", asyncHandler(payheroCallback));
 
 router.use(authenticate);

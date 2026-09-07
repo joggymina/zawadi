@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import * as paymentService from "../services/payment.service";
-import { writeAudit } from "../services/audit.service";
 
 export const depositSchema = z.object({
   amount: z.number().positive().max(10_000_000),
@@ -15,24 +14,71 @@ export async function startDeposit(req: Request, res: Response) {
     amount: body.amount,
     phone: body.phone,
   });
-  await writeAudit({
-    userId: req.user!.id,
-    action: "DEPOSIT_INIT",
-    metadata: { amount: body.amount, intentId: result.intentId },
-    ip: req.ip,
-  });
   return res.status(201).json(result);
 }
 
 export async function getIntent(req: Request, res: Response) {
   const intent = await paymentService.getIntentForUser(req.user!.id, req.params.id);
-  return res.json(intent);
+  return res.json({
+    id: intent.id,
+    status: intent.status,
+    amount: intent.amount,
+  });
 }
 
-/**
- * PayHero webhook — no JWT.
- * Body shape: { status, response: { ResultCode, ExternalReference, ... } }
- */
+/** HashPay webhook — configure in HashPay portal */
+export async function hashpayCallback(req: Request, res: Response) {
+  try {
+    const raw =
+      typeof (req as { rawBody?: Buffer }).rawBody !== "undefined"
+        ? (req as { rawBody?: Buffer }).rawBody!
+        : JSON.stringify(req.body);
+    const sig = req.headers["x-hashpay-signature"];
+    if (!paymentService.verifyHashPaySignature(raw, sig)) {
+      return res.status(401).json({ error: "Invalid signature" });
+    }
+
+    const body = req.body as Record<string, unknown>;
+    const r = (body.response as Record<string, unknown>) ?? body;
+    const code = Number(r.ResponseCode ?? r.ResultCode ?? -1);
+    const checkoutId = String(
+      r.CheckoutRequestID ?? r.checkout_id ?? body.CheckoutRequestID ?? body.checkout_id ?? "",
+    );
+    const externalRef = String(
+      r.TransactionReference ?? r.reference ?? body.TransactionReference ?? body.reference ?? "",
+    );
+    const receipt = r.TransactionReceipt ?? r.TransactionID ?? body.TransactionReceipt;
+    const desc = String(r.ResponseDescription ?? r.ResultDesc ?? body.ResponseDescription ?? "");
+
+    const ok =
+      code === 0 ||
+      String(body.event || "").toLowerCase() === "payment.success" ||
+      String(r.event || "").toLowerCase() === "payment.success";
+
+    if (!externalRef && !checkoutId) {
+      return res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
+    }
+
+    if (ok) {
+      await paymentService.completeDepositSuccess({
+        externalReference: externalRef || checkoutId,
+        providerRef: checkoutId || undefined,
+        mpesaReceipt: receipt ? String(receipt) : undefined,
+      });
+    } else {
+      await paymentService.markDepositFailed(
+        externalRef || checkoutId,
+        desc || "Payment not completed",
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("HashPay callback error:", err);
+  }
+  return res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
+}
+
+/** PayHero webhook — still active when PayHero is selected */
 export async function payheroCallback(req: Request, res: Response) {
   try {
     const payload = req.body as {
@@ -56,8 +102,7 @@ export async function payheroCallback(req: Request, res: Response) {
 
     const code = Number(r?.ResultCode);
     const ok =
-      code === 0 ||
-      String(r?.Status || "").toLowerCase() === "success";
+      code === 0 || String(r?.Status || "").toLowerCase() === "success";
 
     if (ok) {
       await paymentService.completeDepositSuccess({
@@ -75,7 +120,5 @@ export async function payheroCallback(req: Request, res: Response) {
     // eslint-disable-next-line no-console
     console.error("PayHero callback error:", err);
   }
-
-  // Always ACK so PayHero does not retry forever
   return res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
 }

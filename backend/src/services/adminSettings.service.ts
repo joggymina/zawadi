@@ -23,6 +23,7 @@ export async function updateAdminSettings(
     guarantorCoverageExtraPct: number;
     withdrawFeePct: number;
     platformInterestSharePct: number;
+    paymentProvider: "HASHPAY" | "PAYHERO";
   }>,
 ) {
   cached = await prisma.adminSettings.update({ where: { id: 1 }, data });
