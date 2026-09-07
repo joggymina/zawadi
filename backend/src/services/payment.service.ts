@@ -12,7 +12,22 @@ const HASHPAY_BASE = () =>
 
 export type PaymentProvider = "HASHPAY" | "PAYHERO";
 
-/** Normalize to 2547… / 2541… */
+function payHeroAuthHeader(): string {
+  if (env.PAYHERO_BASIC_TOKEN) {
+    const t = env.PAYHERO_BASIC_TOKEN.trim();
+    return t.toLowerCase().startsWith("basic ") ? t : `Basic ${t}`;
+  }
+  if (env.PAYHERO_API_USERNAME && env.PAYHERO_API_PASSWORD) {
+    const raw = Buffer.from(
+      `${env.PAYHERO_API_USERNAME}:${env.PAYHERO_API_PASSWORD}`,
+      "utf8",
+    ).toString("base64");
+    return `Basic ${raw}`;
+  }
+  throw new AppError("PayHero credentials are not configured.", 503);
+}
+
+/** Normalize to 2547… / 2541… (PayHero accepts this — same as the working build) */
 export function normalizeKenyaPhone(input: string): string {
   let p = input.replace(/[\s\-]/g, "");
   if (p.startsWith("+")) p = p.slice(1);
@@ -30,30 +45,14 @@ export async function getActivePaymentProvider(): Promise<PaymentProvider> {
   return raw === "PAYHERO" ? "PAYHERO" : "HASHPAY";
 }
 
-function payHeroAuthHeader(): string {
-  if (env.PAYHERO_BASIC_TOKEN) {
-    const t = env.PAYHERO_BASIC_TOKEN.trim();
-    return t.toLowerCase().startsWith("basic ") ? t : `Basic ${t}`;
-  }
-  if (env.PAYHERO_API_USERNAME && env.PAYHERO_API_PASSWORD) {
-    const raw = Buffer.from(
-      `${env.PAYHERO_API_USERNAME}:${env.PAYHERO_API_PASSWORD}`,
-      "utf8",
-    ).toString("base64");
-    return `Basic ${raw}`;
-  }
-  throw new AppError("PayHero credentials are not configured.", 503);
-}
-
 export function verifyHashPaySignature(
   rawBody: string | Buffer,
   signatureHeader?: string | string[],
 ): boolean {
   const secret = env.HASHPAY_WEBHOOK_SECRET;
-  if (!secret) return true; // verification optional if secret unset
+  if (!secret) return true;
   if (!signatureHeader) return false;
   let sig = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
-  // HashPay sends: X-HashPay-Signature: sha256=<hmac>
   if (sig.toLowerCase().startsWith("sha256=")) sig = sig.slice(7);
   const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
   try {
@@ -66,12 +65,72 @@ export function verifyHashPaySignature(
   }
 }
 
-async function initiateViaHashPay(params: {
+/** Exact PayHero flow from the build that triggered STK successfully */
+async function initiateViaPayHero(params: {
   intentId: string;
   amount: Decimal;
   phone: string;
   username: string;
-}) {
+}): Promise<string | null> {
+  if (!env.PAYHERO_CHANNEL_ID || !env.PAYHERO_CALLBACK_URL) {
+    throw new AppError("PayHero channel/callback is not configured.", 503);
+  }
+
+  const body = {
+    amount: Number(params.amount.toFixed(0)),
+    phone_number: params.phone, // 254… same as working zip
+    channel_id: Number(env.PAYHERO_CHANNEL_ID),
+    provider: "m-pesa",
+    external_reference: params.intentId,
+    customer_name: params.username,
+    callback_url: env.PAYHERO_CALLBACK_URL,
+  };
+
+  let payheroJson: {
+    success?: boolean;
+    status?: string;
+    reference?: string;
+    CheckoutRequestID?: string;
+    message?: string;
+  };
+
+  try {
+    const res = await fetch("https://backend.payhero.co.ke/api/v2/payments", {
+      method: "POST",
+      headers: {
+        Authorization: payHeroAuthHeader(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    // eslint-disable-next-line no-console
+    console.log("PayHero STK response", res.status, text.slice(0, 500));
+    try {
+      payheroJson = JSON.parse(text) as typeof payheroJson;
+    } catch {
+      payheroJson = {};
+    }
+    // Working zip only failed on !res.ok (201 Created is success even if body is sparse)
+    if (!res.ok) {
+      throw new AppError(
+        payheroJson.message || `PayHero error (${res.status}). Try again.`,
+        502,
+      );
+    }
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError("Could not reach PayHero. Try again shortly.", 502);
+  }
+
+  return payheroJson.CheckoutRequestID || payheroJson.reference || null;
+}
+
+async function initiateViaHashPay(params: {
+  intentId: string;
+  amount: Decimal;
+  phone: string;
+}): Promise<string | null> {
   if (!env.HASHPAY_API_KEY || !env.HASHPAY_ACCOUNT_ID) {
     throw new AppError("HashPay is not configured (API key / account id).", 503);
   }
@@ -95,7 +154,14 @@ async function initiateViaHashPay(params: {
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(body),
     });
-    hashJson = (await res.json().catch(() => ({}))) as typeof hashJson;
+    const text = await res.text();
+    // eslint-disable-next-line no-console
+    console.log("HashPay STK response", res.status, text.slice(0, 500));
+    try {
+      hashJson = JSON.parse(text) as typeof hashJson;
+    } catch {
+      hashJson = {};
+    }
     if (!res.ok || hashJson.success === false) {
       throw new AppError(
         hashJson.message || `HashPay error (${res.status}). Try again.`,
@@ -112,54 +178,6 @@ async function initiateViaHashPay(params: {
     hashJson.CheckoutRequestID ||
     null
   );
-}
-
-async function initiateViaPayHero(params: {
-  intentId: string;
-  amount: Decimal;
-  phone: string;
-  username: string;
-}) {
-  if (!env.PAYHERO_CHANNEL_ID || !env.PAYHERO_CALLBACK_URL) {
-    throw new AppError("PayHero channel/callback is not configured.", 503);
-  }
-  const body = {
-    amount: Number(params.amount.toFixed(0)),
-    phone_number: params.phone,
-    channel_id: Number(env.PAYHERO_CHANNEL_ID),
-    provider: "m-pesa",
-    external_reference: params.intentId,
-    customer_name: params.username,
-    callback_url: env.PAYHERO_CALLBACK_URL,
-  };
-  let payheroJson: {
-    success?: boolean;
-    status?: string;
-    message?: string;
-    reference?: string;
-    CheckoutRequestID?: string;
-  };
-  try {
-    const res = await fetch("https://backend.payhero.co.ke/api/v2/payments", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: payHeroAuthHeader(),
-      },
-      body: JSON.stringify(body),
-    });
-    payheroJson = (await res.json().catch(() => ({}))) as typeof payheroJson;
-    if (!res.ok || payheroJson.success === false) {
-      throw new AppError(
-        payheroJson.message || `PayHero error (${res.status}). Try again.`,
-        502,
-      );
-    }
-  } catch (err) {
-    if (err instanceof AppError) throw err;
-    throw new AppError("Could not reach PayHero. Try again shortly.", 502);
-  }
-  return payheroJson.CheckoutRequestID || payheroJson.reference || null;
 }
 
 export async function initiateDeposit(params: {
@@ -181,6 +199,8 @@ export async function initiateDeposit(params: {
 
   const phone = normalizeKenyaPhone(params.phone ?? user.phoneNumber);
   const provider = await getActivePaymentProvider();
+  // eslint-disable-next-line no-console
+  console.log("STK provider selected:", provider);
 
   const intent = await prisma.paymentIntent.create({
     data: {
@@ -205,7 +225,6 @@ export async function initiateDeposit(params: {
         intentId: intent.id,
         amount,
         phone,
-        username: user.username,
       });
     }
   } catch (err) {
@@ -232,7 +251,6 @@ export async function initiateDeposit(params: {
   };
 }
 
-/** Idempotent credit when provider reports success */
 export async function completeDepositSuccess(params: {
   externalReference: string;
   providerRef?: string;
