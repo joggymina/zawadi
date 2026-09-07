@@ -281,7 +281,6 @@ model AdminSettings {
   withdrawFeePct            Decimal  @db.Decimal(6, 3) @default(2.5)
   /// Percent of loan interest kept by the platform when repayments are distributed (wired in a later phase).
   platformInterestSharePct  Decimal  @db.Decimal(6, 3) @default(10)
-  /// Active M-Pesa STK provider: HASHPAY | PAYHERO
   paymentProvider           String   @default("HASHPAY")
   updatedAt                 DateTime @updatedAt
 }
