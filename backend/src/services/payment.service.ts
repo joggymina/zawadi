@@ -50,12 +50,17 @@ export function verifyHashPaySignature(
   signatureHeader?: string | string[],
 ): boolean {
   const secret = env.HASHPAY_WEBHOOK_SECRET;
-  if (!secret) return true;
+  if (!secret) return true; // verification optional if secret unset
   if (!signatureHeader) return false;
-  const sig = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+  let sig = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+  // HashPay sends: X-HashPay-Signature: sha256=<hmac>
+  if (sig.toLowerCase().startsWith("sha256=")) sig = sig.slice(7);
   const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
   try {
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
   } catch {
     return sig === expected;
   }
