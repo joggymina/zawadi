@@ -17,6 +17,7 @@ export const updateSettingsSchema = z.object({
   guarantorCoverageExtraPct: z.number().min(0).max(200).optional(),
   withdrawFeePct: z.number().min(0).max(100).optional(),
   platformInterestSharePct: z.number().min(0).max(100).optional(),
+  paymentProvider: z.enum(["HASHPAY", "PAYHERO"]).optional(),
 });
 
 export const offerSchema = z.object({

@@ -10,6 +10,7 @@ export function AdminRatesPage() {
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [savingProvider, setSavingProvider] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -89,7 +90,7 @@ export function AdminRatesPage() {
                 key={p}
                 type="button"
                 className="btn"
-                disabled={active}
+                disabled={active || savingProvider}
                 style={{
                   padding: "10px 16px",
                   fontSize: 13,
@@ -98,7 +99,13 @@ export function AdminRatesPage() {
                   border: `1px solid ${active ? "var(--green)" : "var(--line)"}`,
                 }}
                 onClick={async () => {
-                  await saveSettings({ paymentProvider: p });
+                  if (savingProvider) return;
+                  setSavingProvider(true);
+                  try {
+                    await saveSettings({ paymentProvider: p });
+                  } finally {
+                    setSavingProvider(false);
+                  }
                 }}
               >
                 {p === "HASHPAY" ? "HashPay" : "PayHero"}
