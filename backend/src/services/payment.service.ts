@@ -7,16 +7,6 @@ import { getAdminSettings } from "./adminSettings.service";
 import * as notifications from "./notification.service";
 import crypto from "crypto";
 
-function isAppError(err: unknown): err is AppError {
-  return (
-    err instanceof AppError ||
-    (typeof err === "object" &&
-      err !== null &&
-      "statusCode" in err &&
-      "message" in err)
-  );
-}
-
 const HASHPAY_BASE = () =>
   (env.HASHPAY_BASE_URL || "https://api.hashback.co.ke").replace(/\/$/, "");
 
@@ -129,11 +119,8 @@ async function initiateViaPayHero(params: {
       );
     }
   } catch (err) {
-    if (isAppError(err)) throw err;
-    // eslint-disable-next-line no-console
-    console.error("PayHero fetch failed", err);
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new AppError(`Could not reach PayHero (${detail}). Try again shortly.`, 502);
+    if (err instanceof AppError) throw err;
+    throw new AppError("Could not reach PayHero. Try again shortly.", 502);
   }
 
   return payheroJson.CheckoutRequestID || payheroJson.reference || null;
@@ -162,40 +149,28 @@ async function initiateViaHashPay(params: {
     CheckoutRequestID?: string;
   };
   try {
-    const url = `${HASHPAY_BASE()}/initiatestk`;
-    // eslint-disable-next-line no-console
-    console.log("HashPay STK request", url, {
-      account_id: env.HASHPAY_ACCOUNT_ID,
-      amount: body.amount,
-      msisdn: body.msisdn,
-      reference: body.reference,
-    });
-    const res = await fetch(url, {
+    const res = await fetch(`${HASHPAY_BASE()}/initiatestk`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(body),
     });
     const text = await res.text();
     // eslint-disable-next-line no-console
-    console.log("HashPay STK response", res.status, text.slice(0, 800));
+    console.log("HashPay STK response", res.status, text.slice(0, 500));
     try {
       hashJson = JSON.parse(text) as typeof hashJson;
     } catch {
-      hashJson = { message: text.slice(0, 200) || `Non-JSON response (${res.status})` };
+      hashJson = {};
     }
     if (!res.ok || hashJson.success === false) {
-      const msg =
-        hashJson.message ||
-        (hashJson as { error?: string }).error ||
-        `HashPay error (${res.status}). Try again.`;
-      throw new AppError(String(msg), 502);
+      throw new AppError(
+        hashJson.message || `HashPay error (${res.status}). Try again.`,
+        502,
+      );
     }
   } catch (err) {
-    if (isAppError(err)) throw err;
-    // eslint-disable-next-line no-console
-    console.error("HashPay fetch failed", err);
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new AppError(`Could not reach HashPay (${detail}). Try again shortly.`, 502);
+    if (err instanceof AppError) throw err;
+    throw new AppError("Could not reach HashPay. Try again shortly.", 502);
   }
   return (
     hashJson.checkout_id ||
