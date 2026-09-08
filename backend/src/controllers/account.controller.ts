@@ -68,45 +68,46 @@ export async function invest(req: Request, res: Response) {
 
 export async function withdraw(req: Request, res: Response) {
   const { amount } = req.body as z.infer<typeof amountSchema>;
-  const gross = new Decimal(amount);
+  // Amount the user types is the *net* they want to receive.
+  // Fee is charged on top and taken from their balance.
+  const net = new Decimal(amount);
 
   await assertWithdrawAllowed(req.user!.id, amount);
 
   const settings = await getAdminSettings();
   const feePct = Number(settings.withdrawFeePct ?? 2.5);
-  const fee = new Decimal(((Number(gross) * feePct) / 100).toFixed(2));
-  const net = gross.minus(fee);
-
-  if (net.lessThanOrEqualTo(0)) {
-    throw new AppError("Amount too small after withdrawal fee.", 422);
-  }
+  const fee = new Decimal(((Number(net) * feePct) / 100).toFixed(2));
+  const totalDebit = net.plus(fee);
 
   // Hold-aware: cannot withdraw principal locked as guarantor
-  await assertCanDebitPrincipal(req.user!.id, gross);
+  await assertCanDebitPrincipal(req.user!.id, totalDebit);
 
   const account = await prisma.investmentAccount.findUnique({
     where: { userId: req.user!.id },
   });
   if (!account) throw new AppError("Account not found.", 404);
-  if (gross.greaterThan(account.principalBalance)) {
-    throw new AppError("That's more than your investment principal.", 422);
+  if (totalDebit.greaterThan(account.principalBalance)) {
+    throw new AppError(
+      `Insufficient balance. You need ${totalDebit.toFixed(2)} (amount ${net.toFixed(2)} + ${feePct}% fee ${fee.toFixed(2)}).`,
+      422,
+    );
   }
 
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.investmentAccount.update({
       where: { userId: req.user!.id },
-      data: { principalBalance: { decrement: gross } },
+      data: { principalBalance: { decrement: totalDebit } },
     });
     await tx.transaction.create({
       data: {
         userId: req.user!.id,
         type: "WITHDRAWAL",
-        amount: gross,
+        amount: totalDebit,
         balanceAfter: updated.principalBalance.plus(updated.interestBalance),
-        note: `Withdrawal gross ${gross.toFixed(2)}; platform fee ${fee.toFixed(2)} (${feePct.toFixed(2)}%); net ${net.toFixed(2)}`,
+        note: `Withdrawal net ${net.toFixed(2)}; platform fee ${fee.toFixed(2)} (${feePct.toFixed(2)}%); total debited ${totalDebit.toFixed(2)}`,
       },
     });
-    // Fee stays with the platform (not paid out with the net withdrawal).
+    // Fee credited to platform account.
     if (fee.greaterThan(0)) {
       await creditPlatformTx(tx, fee);
     }
@@ -117,9 +118,9 @@ export async function withdraw(req: Request, res: Response) {
     userId: req.user!.id,
     action: "WITHDRAW",
     metadata: {
-      amount: Number(gross),
-      fee: Number(fee),
       net: Number(net),
+      fee: Number(fee),
+      totalDebit: Number(totalDebit),
       feePct,
     },
     ip: req.ip,
@@ -127,7 +128,7 @@ export async function withdraw(req: Request, res: Response) {
 
   return res.json({
     principalBalance: result.principalBalance,
-    amount: gross,
+    amount: totalDebit,
     fee,
     net,
     feePct,
