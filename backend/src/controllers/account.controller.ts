@@ -7,6 +7,7 @@ import { writeAudit } from "../services/audit.service";
 import { assertInvestAllowed, assertWithdrawAllowed } from "../services/kycLimits.service";
 import { assertCanDebitPrincipal, getAvailablePrincipal } from "../services/guarantorHold.service";
 import { getAdminSettings } from "../services/adminSettings.service";
+import { creditPlatformTx } from "../services/platform.service";
 
 export const amountSchema = z.object({
   amount: z.number().positive().max(10_000_000),
@@ -105,6 +106,10 @@ export async function withdraw(req: Request, res: Response) {
         note: `Withdrawal gross ${gross.toFixed(2)}; platform fee ${fee.toFixed(2)} (${feePct.toFixed(2)}%); net ${net.toFixed(2)}`,
       },
     });
+    // Fee stays with the platform (not paid out with the net withdrawal).
+    if (fee.greaterThan(0)) {
+      await creditPlatformTx(tx, fee);
+    }
     return updated;
   });
 
