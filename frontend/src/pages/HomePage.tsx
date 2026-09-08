@@ -158,10 +158,10 @@ export function HomePage() {
 {modal === "withdraw" && (
   <AmountModal
     title="Withdraw"
-    balanceLabel={`Available principal: ${fmt(account.principalBalance)} · amount below is what you receive; ${Number(settings.withdrawFeePct ?? 2.5)}% fee is taken on top from your balance`}
+    balanceLabel={`Available principal: ${fmt(account.principalBalance)} · ${Number(settings.withdrawFeePct ?? 2.5)}% fee will be deducted`}
     confirmLabel="Withdraw"
     needsConfirm
-    confirmHint={`You receive the amount entered. An extra ${Number(settings.withdrawFeePct ?? 2.5)}% fee is deducted from your balance and kept by the platform.`}
+    confirmHint={`The amount will created to your M-Pesa. ${Number(settings.withdrawFeePct ?? 2.5)}% is deducted from your balance as Transaction fee.`}
     onClose={() => setModal(null)}
     onSubmit={async (amt) => {
       const feePct = Number(settings.withdrawFeePct ?? 2.5);
