@@ -9,6 +9,7 @@ import type { AccountSummary, Loan, AdminSettings, Offer } from "../api/types";
 import { AmountModal } from "../components/AmountModal";
 import { fmt, pct, errorMessage, fundingCountdown } from "../utils/format";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../context/AuthContext";
 import * as paymentsApi from "../api/payments";
 
 function relativeTime(iso: string) {
@@ -30,6 +31,7 @@ const sectionTitle = {
 
 export function HomePage() {
   const showToast = useToast();
+  const { user } = useAuth();
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [offers, setOffers] = useState<Offer[]>([]);
@@ -45,27 +47,32 @@ export function HomePage() {
 
   const load = useCallback(async () => {
     try {
-      const [acc, s, o, loans, st, act, eng] = await Promise.all([
+      const verified = user?.kycStatus === "VERIFIED";
+      const [acc, s, o, loans, eng, st, act] = await Promise.all([
         accountApi.getMe(),
         publicApi.getPublicSettings(),
         publicApi.getPublicOffers(),
         loansApi.marketplace(),
-        publicApi.getPlatformStats().catch(() => null),
-        publicApi.getPlatformActivity(6).catch(() => []),
         accountApi.getEngagement().catch(() => null),
+        verified
+          ? publicApi.getPlatformStats().catch(() => null)
+          : Promise.resolve(null),
+        verified
+          ? publicApi.getPlatformActivity(6).catch(() => [])
+          : Promise.resolve([] as ActivityItem[]),
       ]);
       setAccount(acc);
       setSettings(s);
       setOffers(o);
       setOpenLoans(loans.slice(0, 3));
+      setEngagement(eng);
       setStats(st);
       setActivity(act);
-      setEngagement(eng);
       if (eng && eng.completedSteps >= 3) setChecklistOpen(false);
     } catch (err) {
       setError(errorMessage(err, "Couldn't load your dashboard."));
     }
-  }, []);
+  }, [user?.kycStatus]);
 
   useEffect(() => {
     load();
@@ -430,68 +437,103 @@ export function HomePage() {
       </div>
 
       {/* Stats + activity side-by-side feel via stacked compact cards */}
-      {stats && (
-        <div style={{ marginTop: 16 }}>
-          <div style={sectionTitle}>Platform</div>
-          <div
-            className="card"
+      {user?.kycStatus === "VERIFIED" ? (
+        <>
+          {stats && (
+            <div style={{ marginTop: 16 }}>
+              <div style={sectionTitle}>Platform</div>
+              <div
+                className="card"
+                style={{
+                  padding: 12,
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "12px 10px",
+                }}
+              >
+                {(
+                  [
+                    ["Under management", fmt(stats.underManagement)],
+                    ["Members", String(stats.members)],
+                    ["Repaid this month", String(stats.loansRepaidThisMonth)],
+                    ["Open for funding", String(stats.openForFunding)],
+                  ] as const
+                ).map(([label, value]) => (
+                  <div key={label}>
+                    <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>{label}</div>
+                    <div className="mono" style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>
+                      {value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activity.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={sectionTitle}>Recent activity</div>
+              <div className="card" style={{ padding: "4px 0", overflow: "hidden" }}>
+                {activity.slice(0, 5).map((a, i) => (
+                  <div
+                    key={`${a.at}-${i}`}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "10px 14px",
+                      borderTop: i === 0 ? "none" : "1px solid var(--line)",
+                      fontSize: 12.5,
+                    }}
+                  >
+                    <span style={{ color: "var(--ink)", lineHeight: 1.35 }}>{a.text}</span>
+                    <span
+                      style={{
+                        color: "var(--ink-soft)",
+                        whiteSpace: "nowrap",
+                        fontSize: 11.5,
+                      }}
+                    >
+                      {relativeTime(a.at)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div
+          className="card"
+          style={{
+            marginTop: 16,
+            padding: "14px 14px",
+            border: "1px dashed var(--line)",
+            background: "var(--green-pale)",
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--green-deep)" }}>
+            Unlock platform insights
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 6, lineHeight: 1.45 }}>
+            Verify your identity to see under management totals, member activity, and live
+            marketplace signals.
+          </div>
+          <Link
+            to="/account"
             style={{
-              padding: 12,
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "12px 10px",
+              display: "inline-block",
+              marginTop: 10,
+              fontSize: 13,
+              fontWeight: 600,
+              color: "var(--green-deep)",
             }}
           >
-            {(
-              [
-                ["Under management", fmt(stats.underManagement)],
-                ["Members", String(stats.members)],
-                ["Repaid this month", String(stats.loansRepaidThisMonth)],
-                ["Open for funding", String(stats.openForFunding)],
-              ] as const
-            ).map(([label, value]) => (
-              <div key={label}>
-                <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>{label}</div>
-                <div className="mono" style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>
-                  {value}
-                </div>
-              </div>
-            ))}
-          </div>
+            Verify identity →
+          </Link>
         </div>
       )}
 
-      {activity.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <div style={sectionTitle}>Recent activity</div>
-          <div className="card" style={{ padding: "4px 0", overflow: "hidden" }}>
-            {activity.slice(0, 5).map((a, i) => (
-              <div
-                key={`${a.at}-${i}`}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  padding: "10px 14px",
-                  borderTop: i === 0 ? "none" : "1px solid var(--line)",
-                  fontSize: 12.5,
-                }}
-              >
-                <span style={{ color: "var(--ink)", lineHeight: 1.35 }}>{a.text}</span>
-                <span
-                  style={{
-                    color: "var(--ink-soft)",
-                    whiteSpace: "nowrap",
-                    fontSize: 11.5,
-                  }}
-                >
-                  {relativeTime(a.at)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Invite compact */}
       {engagement && (
