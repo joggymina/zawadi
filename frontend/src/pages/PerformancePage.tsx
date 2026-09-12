@@ -81,10 +81,7 @@ export function PerformancePage() {
 
   return (
     <div>
-      <div className="display" style={{ fontSize: 20, fontWeight: 600 }}>
-        Performance
-      </div>
-      <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 4 }}>
+      <div style={{ fontSize: 13, color: "var(--ink-soft)", marginBottom: 4 }}>
         Interest earned and projections on your current principal.
       </div>
 

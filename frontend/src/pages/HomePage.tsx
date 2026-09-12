@@ -19,6 +19,15 @@ function relativeTime(iso: string) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+const sectionTitle = {
+  fontSize: 12,
+  fontWeight: 600,
+  letterSpacing: 0.04,
+  textTransform: "uppercase" as const,
+  color: "var(--ink-soft)",
+  marginBottom: 8,
+};
+
 export function HomePage() {
   const showToast = useToast();
   const [account, setAccount] = useState<AccountSummary | null>(null);
@@ -42,17 +51,17 @@ export function HomePage() {
         publicApi.getPublicOffers(),
         loansApi.marketplace(),
         publicApi.getPlatformStats().catch(() => null),
-        publicApi.getPlatformActivity(10).catch(() => []),
+        publicApi.getPlatformActivity(6).catch(() => []),
         accountApi.getEngagement().catch(() => null),
       ]);
       setAccount(acc);
       setSettings(s);
       setOffers(o);
-      setOpenLoans(loans.slice(0, 2));
+      setOpenLoans(loans.slice(0, 3));
       setStats(st);
       setActivity(act);
       setEngagement(eng);
-      if (eng && eng.completedSteps >= eng.totalSteps) setChecklistOpen(false);
+      if (eng && eng.completedSteps >= 3) setChecklistOpen(false);
     } catch (err) {
       setError(errorMessage(err, "Couldn't load your dashboard."));
     }
@@ -88,89 +97,116 @@ export function HomePage() {
           done: engagement.steps.verified,
           label: "Verify your identity",
           to: "/account",
-          hint: "Usually reviewed within about 24 hours",
+          hint: "Usually within ~24 hours",
         },
         {
           key: "firstDeposit",
           done: engagement.steps.firstDeposit,
-          label: "Make your first deposit",
+          label: "Fund your wallet",
           action: () => setModal("invest"),
-          hint: "Start small via M-Pesa STK",
+          hint: "Deposit via M-Pesa STK",
         },
         {
           key: "fundedOrGuaranteed",
           done: engagement.steps.fundedOrGuaranteed,
-          label: "Fund a loan or accept a guarantee",
+          label: "Fund or guarantee a loan",
           to: "/loans",
-          hint: "See open loans and guarantee requests",
+          hint: "Earn from the marketplace",
         },
         {
           key: "requestedLoan",
           done: engagement.steps.requestedLoan,
-          label: "Optional: request a loan",
+          label: "Request a loan (optional)",
           to: "/loans",
-          hint: "When you need capital and have guarantors",
+          hint: "When you need capital",
         },
       ]
     : [];
 
+  const showChecklist =
+    engagement && engagement.completedSteps < engagement.totalSteps;
+
   return (
-    <div>
+    <div style={{ paddingBottom: 8 }}>
+      {/* Balance hero */}
       <div
         style={{
           background: `linear-gradient(160deg, var(--green), var(--green-deep))`,
           borderRadius: 20,
-          padding: "22px 22px 26px",
+          padding: "20px 20px 22px",
           color: "#f4fbf4",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, opacity: 0.85 }}>
           Investment balance
           <button
+            type="button"
             onClick={() => setHidden((h) => !h)}
             style={{
-              background: "none",
+              background: "rgba(244,251,244,0.15)",
               border: "none",
               color: "inherit",
               cursor: "pointer",
-              opacity: 0.9,
+              fontSize: 11,
+              padding: "2px 8px",
+              borderRadius: 999,
             }}
-            aria-label={hidden ? "Show balance" : "Hide balance"}
           >
             {hidden ? "Show" : "Hide"}
           </button>
         </div>
-        <div className="mono" style={{ fontSize: 32, fontWeight: 600, marginTop: 6, letterSpacing: -0.5 }}>
+        <div
+          className="mono"
+          style={{ fontSize: 30, fontWeight: 600, marginTop: 6, letterSpacing: -0.5 }}
+        >
           {hidden ? "••••••" : fmt(account.totalBalance)}
         </div>
-        <div style={{ fontSize: 12.5, opacity: 0.8, marginTop: 4 }}>
+        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
           Principal {hidden ? "••••" : fmt(account.principalBalance)} · Interest{" "}
           {hidden ? "••••" : fmt(account.interestBalance)}
         </div>
+
         <div
           style={{
-            display: "flex",
-            gap: 18,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 10,
             marginTop: 14,
+            padding: "10px 12px",
+            borderRadius: 12,
+            background: "rgba(0,0,0,0.12)",
             fontSize: 12,
-            opacity: 0.9,
           }}
         >
           <div>
-            <div style={{ opacity: 0.75 }}>Est. interest / day</div>
-            <div className="mono" style={{ fontWeight: 600 }}>
+            <div style={{ opacity: 0.75 }}>Available</div>
+            <div className="mono" style={{ fontWeight: 600, marginTop: 2 }}>
+              {hidden ? "—" : fmt(available)}
+            </div>
+          </div>
+          <div>
+            <div style={{ opacity: 0.75 }}>Held as guarantor</div>
+            <div className="mono" style={{ fontWeight: 600, marginTop: 2 }}>
+              {hidden ? "—" : fmt(held)}
+            </div>
+          </div>
+          <div>
+            <div style={{ opacity: 0.75 }}>Est. / day</div>
+            <div className="mono" style={{ fontWeight: 600, marginTop: 2 }}>
               {hidden ? "—" : projectedDaily.toFixed(2)}
             </div>
           </div>
           <div>
-            <div style={{ opacity: 0.75 }}>Net rate</div>
-            <div className="mono" style={{ fontWeight: 600 }}>
+            <div style={{ opacity: 0.75 }}>Rate</div>
+            <div className="mono" style={{ fontWeight: 600, marginTop: 2 }}>
               {pct(settings.investAnnualRatePct)}
             </div>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           <button
+            type="button"
             className="btn"
             style={{
               flex: 1,
@@ -183,6 +219,7 @@ export function HomePage() {
             Invest
           </button>
           <button
+            type="button"
             className="btn"
             style={{
               flex: 1,
@@ -197,32 +234,9 @@ export function HomePage() {
         </div>
       </div>
 
-      {/* Money map */}
-      <div className="card" style={{ marginTop: 14, padding: 14 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Where your money is</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12.5 }}>
-          <div>
-            <div style={{ color: "var(--ink-soft)" }}>Available</div>
-            <div className="mono" style={{ fontWeight: 600 }}>
-              {fmt(available)}
-            </div>
-          </div>
-          <div>
-            <div style={{ color: "var(--ink-soft)" }}>Held as guarantor</div>
-            <div className="mono" style={{ fontWeight: 600 }}>
-              {fmt(held)}
-            </div>
-          </div>
-        </div>
-        <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 8, lineHeight: 1.4 }}>
-          Available can be withdrawn or used to fund loans. Guarantor holds unlock when those loans
-          are repaid or cancelled.
-        </div>
-      </div>
-
-      {/* Onboarding checklist */}
-      {engagement && engagement.completedSteps < engagement.totalSteps && (
-        <div className="card" style={{ marginTop: 14, padding: 14 }}>
+      {/* Checklist — compact */}
+      {showChecklist && (
+        <div className="card" style={{ marginTop: 12, padding: "12px 14px" }}>
           <button
             type="button"
             onClick={() => setChecklistOpen((o) => !o)}
@@ -239,43 +253,88 @@ export function HomePage() {
             }}
           >
             <span style={{ fontSize: 13, fontWeight: 600 }}>
-              Get started · {engagement.completedSteps}/{engagement.totalSteps}
+              Get started · {engagement!.completedSteps}/{engagement!.totalSteps}
             </span>
             <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>
               {checklistOpen ? "Hide" : "Show"}
             </span>
           </button>
+          {/* progress bar */}
+          <div
+            style={{
+              marginTop: 10,
+              height: 6,
+              borderRadius: 4,
+              background: "var(--line)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${(engagement!.completedSteps / engagement!.totalSteps) * 100}%`,
+                height: "100%",
+                background: "var(--green)",
+                borderRadius: 4,
+              }}
+            />
+          </div>
           {checklistOpen && (
-            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
               {checklistItems.map((s) => (
                 <div
                   key={s.key}
                   style={{
                     display: "flex",
                     gap: 10,
-                    alignItems: "flex-start",
+                    alignItems: "center",
                     padding: "8px 10px",
                     borderRadius: 10,
-                    background: s.done ? "var(--green-pale)" : "var(--bg)",
-                    border: "1px solid var(--line)",
+                    background: s.done ? "var(--green-pale)" : "transparent",
+                    border: `1px solid ${s.done ? "transparent" : "var(--line)"}`,
                   }}
                 >
-                  <span style={{ fontSize: 14 }}>{s.done ? "✓" : "○"}</span>
-                  <div style={{ flex: 1 }}>
+                  <span
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: "50%",
+                      display: "grid",
+                      placeItems: "center",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: s.done ? "var(--green)" : "var(--line)",
+                      color: s.done ? "#fff" : "var(--ink-soft)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {s.done ? "✓" : ""}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 500 }}>{s.label}</div>
-                    <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{s.hint}</div>
+                    {!s.done && (
+                      <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>{s.hint}</div>
+                    )}
                   </div>
                   {!s.done && s.to && (
-                    <Link to={s.to} style={{ fontSize: 12, color: "var(--green-deep)", fontWeight: 500 }}>
+                    <Link
+                      to={s.to}
+                      style={{ fontSize: 12, color: "var(--green-deep)", fontWeight: 600 }}
+                    >
                       Go
                     </Link>
                   )}
                   {!s.done && s.action && (
                     <button
                       type="button"
-                      className="btn"
-                      style={{ fontSize: 12, padding: "4px 10px" }}
                       onClick={s.action}
+                      style={{
+                        fontSize: 12,
+                        color: "var(--green-deep)",
+                        fontWeight: 600,
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                      }}
                     >
                       Go
                     </button>
@@ -287,58 +346,145 @@ export function HomePage() {
         </div>
       )}
 
-      {/* Platform proof */}
+      {/* Open loans — high engagement, above stats */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={sectionTitle}>Open for funding</div>
+          <Link to="/loans" style={{ fontSize: 12.5, color: "var(--green-deep)", fontWeight: 500 }}>
+            See all
+          </Link>
+        </div>
+        {openLoans.length === 0 ? (
+          <div
+            className="card"
+            style={{ padding: 14, color: "var(--ink-soft)", fontSize: 13 }}
+          >
+            No loans open right now. Check back soon.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {openLoans.map((l) => {
+              const cd = l.fundingClosesAt
+                ? fundingCountdown(l.fundingClosesAt, nowTick)
+                : "";
+              const funded = Number(l.fundedAmount ?? 0);
+              const target = Number(l.amount);
+              const pctFunded =
+                target > 0 ? Math.min(100, Math.round((funded / target) * 100)) : 0;
+              return (
+                <Link
+                  key={l.id}
+                  to="/loans"
+                  className="card"
+                  style={{
+                    display: "block",
+                    padding: "12px 14px",
+                    textDecoration: "none",
+                    color: "inherit",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>
+                      @{l.borrower?.username ?? "borrower"}
+                    </span>
+                    <span className="mono" style={{ fontWeight: 600 }}>
+                      {fmt(l.amount)}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      height: 5,
+                      borderRadius: 3,
+                      background: "var(--line)",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${pctFunded}%`,
+                        height: "100%",
+                        background: "var(--green)",
+                      }}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginTop: 6,
+                      fontSize: 11.5,
+                      color: "var(--ink-soft)",
+                    }}
+                  >
+                    <span>{pctFunded}% funded</span>
+                    {cd && cd !== "Closed" && (
+                      <span style={{ color: "#b8860b", fontWeight: 500 }}>{cd}</span>
+                    )}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Stats + activity side-by-side feel via stacked compact cards */}
       {stats && (
-        <div className="card" style={{ marginTop: 14, padding: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Platform at a glance</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 12.5 }}>
-            <div>
-              <div style={{ color: "var(--ink-soft)" }}>Under management</div>
-              <div className="mono" style={{ fontWeight: 600 }}>
-                {fmt(stats.underManagement)}
+        <div style={{ marginTop: 16 }}>
+          <div style={sectionTitle}>Platform</div>
+          <div
+            className="card"
+            style={{
+              padding: 12,
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "12px 10px",
+            }}
+          >
+            {(
+              [
+                ["Under management", fmt(stats.underManagement)],
+                ["Members", String(stats.members)],
+                ["Repaid this month", String(stats.loansRepaidThisMonth)],
+                ["Open for funding", String(stats.openForFunding)],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label}>
+                <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>{label}</div>
+                <div className="mono" style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>
+                  {value}
+                </div>
               </div>
-            </div>
-            <div>
-              <div style={{ color: "var(--ink-soft)" }}>Members</div>
-              <div className="mono" style={{ fontWeight: 600 }}>
-                {stats.members}
-              </div>
-            </div>
-            <div>
-              <div style={{ color: "var(--ink-soft)" }}>Repaid this month</div>
-              <div className="mono" style={{ fontWeight: 600 }}>
-                {stats.loansRepaidThisMonth}
-              </div>
-            </div>
-            <div>
-              <div style={{ color: "var(--ink-soft)" }}>Open for funding</div>
-              <div className="mono" style={{ fontWeight: 600 }}>
-                {stats.openForFunding}
-              </div>
-            </div>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Live activity */}
       {activity.length > 0 && (
-        <div className="card" style={{ marginTop: 14, padding: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Recent activity</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {activity.slice(0, 8).map((a, i) => (
+        <div style={{ marginTop: 16 }}>
+          <div style={sectionTitle}>Recent activity</div>
+          <div className="card" style={{ padding: "4px 0", overflow: "hidden" }}>
+            {activity.slice(0, 5).map((a, i) => (
               <div
                 key={`${a.at}-${i}`}
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  gap: 10,
-                  fontSize: 12.5,
+                  gap: 12,
+                  padding: "10px 14px",
                   borderTop: i === 0 ? "none" : "1px solid var(--line)",
-                  paddingTop: i === 0 ? 0 : 8,
+                  fontSize: 12.5,
                 }}
               >
-                <span style={{ color: "var(--ink)" }}>{a.text}</span>
-                <span style={{ color: "var(--ink-soft)", whiteSpace: "nowrap" }}>
+                <span style={{ color: "var(--ink)", lineHeight: 1.35 }}>{a.text}</span>
+                <span
+                  style={{
+                    color: "var(--ink-soft)",
+                    whiteSpace: "nowrap",
+                    fontSize: 11.5,
+                  }}
+                >
                   {relativeTime(a.at)}
                 </span>
               </div>
@@ -347,20 +493,30 @@ export function HomePage() {
         </div>
       )}
 
-      {/* Invite */}
+      {/* Invite compact */}
       {engagement && (
-        <div className="card" style={{ marginTop: 14, padding: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>Invite friends</div>
-          <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 6, lineHeight: 1.45 }}>
-            Share your link so they can create an account and invest — then they can guarantee your
-            loans. {engagement.referralCount > 0
-              ? `${engagement.referralCount} joined with your link.`
-              : "No referrals yet."}
+        <div
+          className="card"
+          style={{
+            marginTop: 16,
+            padding: "12px 14px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Invite friends</div>
+            <div style={{ fontSize: 12, color: "var(--ink-soft)", marginTop: 2 }}>
+              {engagement.referralCount > 0
+                ? `${engagement.referralCount} joined with your link`
+                : "Share so they can invest & guarantee you"}
+            </div>
           </div>
           <button
             type="button"
             className="btn"
-            style={{ marginTop: 10, fontSize: 13 }}
+            style={{ fontSize: 12, padding: "8px 12px", flexShrink: 0 }}
             onClick={async () => {
               const url = `${window.location.origin}${engagement.invitePath}`;
               try {
@@ -371,63 +527,30 @@ export function HomePage() {
               }
             }}
           >
-            Copy invite link
+            Copy link
           </button>
         </div>
       )}
 
       {offers.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Offers</div>
-          {offers.map((o) => (
-            <div key={o.id} className="card" style={{ padding: 14, marginBottom: 8 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{o.title}</div>
-              <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4 }}>{o.description}</div>
+          <div style={sectionTitle}>Offers</div>
+          {offers.slice(0, 2).map((o) => (
+            <div key={o.id} className="card" style={{ padding: 12, marginBottom: 8 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>{o.title}</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 4, lineHeight: 1.4 }}>
+                {o.description}
+              </div>
             </div>
           ))}
         </div>
       )}
 
-      <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>Open loans</div>
-        <Link to="/loans" style={{ fontSize: 12.5, color: "var(--green-deep)" }}>
-          See all
-        </Link>
-      </div>
-      {openLoans.length === 0 ? (
-        <div className="card" style={{ marginTop: 8, padding: 16, color: "var(--ink-soft)", fontSize: 13 }}>
-          No loans open for funding right now.
-        </div>
-      ) : (
-        openLoans.map((l) => {
-          const cd = l.fundingClosesAt ? fundingCountdown(l.fundingClosesAt, nowTick) : "";
-          return (
-            <Link
-              key={l.id}
-              to="/loans"
-              className="card"
-              style={{
-                display: "block",
-                marginTop: 8,
-                padding: 14,
-                textDecoration: "none",
-                color: "inherit",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontWeight: 600 }}>@{l.borrower?.username ?? "borrower"}</span>
-                <span className="mono">{fmt(l.amount)}</span>
-              </div>
-              {cd && cd !== "Closed" && (
-                <div style={{ fontSize: 11.5, color: "#b8860b", marginTop: 4 }}>{cd}</div>
-              )}
-            </Link>
-          );
-        })
-      )}
-
-      <div style={{ marginTop: 16, textAlign: "center" }}>
-        <Link to="/performance" style={{ fontSize: 13, color: "var(--green-deep)", fontWeight: 500 }}>
+      <div style={{ marginTop: 18, textAlign: "center" }}>
+        <Link
+          to="/performance"
+          style={{ fontSize: 13, color: "var(--green-deep)", fontWeight: 500 }}
+        >
           See your performance →
         </Link>
       </div>
@@ -460,7 +583,9 @@ export function HomePage() {
             const total = amt + fee;
             await accountApi.withdraw(amt);
             await load();
-            showToast(`Withdraw ${fmt(amt)} (fee ${fmt(fee)}; ${fmt(total)} left your balance)`);
+            showToast(
+              `Withdraw ${fmt(amt)} (fee ${fmt(fee)}; ${fmt(total)} left your balance)`,
+            );
             setModal(null);
           }}
         />

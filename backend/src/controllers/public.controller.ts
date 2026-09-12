@@ -45,82 +45,121 @@ export async function platformStats(_req: Request, res: Response) {
   });
 }
 
-/** Recent sanitized activity for social proof. */
+/**
+ * Recent sanitized activity. Prefers deposits / funding / repayments over
+ * bulk daily interest rows so the feed stays readable.
+ */
 export async function platformActivity(req: Request, res: Response) {
-  const limit = Math.min(Number(req.query.limit) || 12, 30);
+  const limit = Math.min(Number(req.query.limit) || 8, 20);
 
-  const [txs, repaid, funded] = await Promise.all([
+  const [deposits, funds, returns, repaid, interestSample] = await Promise.all([
     prisma.transaction.findMany({
       where: {
-        type: { in: ["DEPOSIT", "INTEREST", "LOAN_FUND", "LOAN_RETURN"] },
+        type: "DEPOSIT",
         user: { username: { not: "__platform__" } },
       },
       orderBy: { createdAt: "desc" },
-      take: limit,
-      select: { type: true, amount: true, createdAt: true },
+      take: 8,
+      select: { createdAt: true },
+    }),
+    prisma.loanFunding.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: { createdAt: true, amount: true },
+    }),
+    prisma.transaction.findMany({
+      where: {
+        type: "LOAN_RETURN",
+        user: { username: { not: "__platform__" } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+      select: { createdAt: true },
     }),
     prisma.loan.findMany({
       where: { status: "REPAID" },
       orderBy: { updatedAt: "desc" },
-      take: 5,
-      select: { amount: true, updatedAt: true },
+      take: 6,
+      select: { updatedAt: true },
     }),
-    prisma.loanFunding.findMany({
+    prisma.transaction.findMany({
+      where: {
+        type: "INTEREST",
+        user: { username: { not: "__platform__" } },
+      },
       orderBy: { createdAt: "desc" },
-      take: 5,
-      select: { amount: true, createdAt: true },
+      take: 3,
+      select: { createdAt: true },
     }),
   ]);
 
-  type Item = { kind: string; text: string; at: string };
+  type Item = { kind: string; text: string; at: string; rank: number };
   const items: Item[] = [];
 
-  for (const t of txs) {
-    const amt = Number(t.amount);
-    if (t.type === "DEPOSIT") {
-      items.push({
-        kind: "deposit",
-        text: `A member invested via M-Pesa`,
-        at: t.createdAt.toISOString(),
-      });
-    } else if (t.type === "INTEREST") {
-      items.push({
-        kind: "interest",
-        text: `Investment interest was credited`,
-        at: t.createdAt.toISOString(),
-      });
-    } else if (t.type === "LOAN_FUND") {
-      items.push({
-        kind: "fund",
-        text: `Someone funded a marketplace loan`,
-        at: t.createdAt.toISOString(),
-      });
-    } else if (t.type === "LOAN_RETURN") {
-      items.push({
-        kind: "return",
-        text: `A funder received a repayment share`,
-        at: t.createdAt.toISOString(),
-      });
-    }
-    void amt;
+  for (const t of deposits) {
+    items.push({
+      kind: "deposit",
+      text: "A member invested via M-Pesa",
+      at: t.createdAt.toISOString(),
+      rank: 1,
+    });
   }
-
+  for (const f of funds) {
+    items.push({
+      kind: "fund",
+      text: "A marketplace loan received funding",
+      at: f.createdAt.toISOString(),
+      rank: 2,
+    });
+  }
   for (const l of repaid) {
     items.push({
       kind: "repaid",
-      text: `A loan was fully repaid`,
+      text: "A loan was fully repaid",
       at: l.updatedAt.toISOString(),
+      rank: 1,
     });
   }
-
-  for (const f of funded) {
+  for (const t of returns) {
     items.push({
-      kind: "fund",
-      text: `A loan received new funding`,
-      at: f.createdAt.toISOString(),
+      kind: "return",
+      text: "A funder received a repayment share",
+      at: t.createdAt.toISOString(),
+      rank: 3,
+    });
+  }
+  // At most one interest line (batch jobs create many identical rows)
+  if (interestSample[0]) {
+    items.push({
+      kind: "interest",
+      text: "Daily investment interest was credited to members",
+      at: interestSample[0].createdAt.toISOString(),
+      rank: 9,
     });
   }
 
+  // Dedupe identical kind within 2 minutes
   items.sort((a, b) => (a.at < b.at ? 1 : -1));
-  return res.json(items.slice(0, limit));
+  const deduped: Item[] = [];
+  for (const it of items) {
+    const prev = deduped[deduped.length - 1];
+    if (
+      prev &&
+      prev.kind === it.kind &&
+      Math.abs(new Date(prev.at).getTime() - new Date(it.at).getTime()) < 120_000
+    ) {
+      continue;
+    }
+    deduped.push(it);
+  }
+
+  // Prefer higher-signal events, then recency
+  deduped.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return a.at < b.at ? 1 : -1;
+  });
+
+  return res.json(
+    deduped.slice(0, limit).map(({ kind, text, at }) => ({ kind, text, at })),
+  );
 }

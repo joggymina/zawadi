@@ -148,18 +148,24 @@ export async function getEngagement(req: Request, res: Response) {
     },
   });
 
-  const [depositCount, fundCount, guaranteeCount, loanCount] = await Promise.all([
+  const [depositCount, fundCount, guaranteeCount, loanCount, account] = await Promise.all([
     prisma.transaction.count({ where: { userId, type: "DEPOSIT" } }),
     prisma.loanFunding.count({ where: { funderId: userId } }),
     prisma.loanGuarantor.count({
       where: { userId, status: "ACCEPTED" },
     }),
     prisma.loan.count({ where: { borrowerId: userId } }),
+    prisma.investmentAccount.findUnique({ where: { userId } }),
   ]);
+
+  const hasBalance =
+    !!account &&
+    (account.principalBalance.greaterThan(0) || account.interestBalance.greaterThan(0));
 
   const steps = {
     verified: user.kycStatus === "VERIFIED",
-    firstDeposit: depositCount > 0,
+    // Admin top-ups / adjustments may not create DEPOSIT rows — treat balance as funded.
+    firstDeposit: depositCount > 0 || hasBalance,
     fundedOrGuaranteed: fundCount > 0 || guaranteeCount > 0,
     requestedLoan: loanCount > 0,
   };
