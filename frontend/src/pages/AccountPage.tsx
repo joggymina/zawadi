@@ -189,7 +189,7 @@ export function AccountPage() {
               ))}
             </div>
             </>
-          )}
+          ))}
 
         {panel === "kyc" && (
           <div>
