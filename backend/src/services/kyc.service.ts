@@ -154,7 +154,7 @@ export async function approveSubmission(params: { submissionId: string; adminId:
       userId: sub.userId,
       type: "KYC_APPROVED",
       title: "Identity verified",
-      body: "Your KYC was approved. Higher limits may now apply.",
+      body: "Your identity is verified. Higher invest and loan limits now apply. Review usually finishes within about a day when you submit clear photos.",
       meta: { submissionId: sub.id },
     });
   } catch {

@@ -11,6 +11,7 @@ import loanRoutes from "./routes/loan.routes";
 import adminRoutes from "./routes/admin.routes";
 import settingsRoutes from "./routes/settings.routes";
 import offersRoutes from "./routes/offers.routes";
+import publicRoutes from "./routes/public.routes";
 import packagesRoutes from "./routes/packages.routes";
 import notificationRoutes from "./routes/notification.routes";
 import paymentRoutes from "./routes/payment.routes";
@@ -41,6 +42,7 @@ export function createApp() {
   app.use("/api/admin", adminRoutes);
   app.use("/api/settings", settingsRoutes);
   app.use("/api/offers", offersRoutes);
+  app.use("/api/public", publicRoutes);
   app.use("/api/packages", packagesRoutes);
   app.use("/api/notifications", notificationRoutes);
   app.use("/api/payments", paymentRoutes);

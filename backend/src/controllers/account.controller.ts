@@ -134,3 +134,44 @@ export async function withdraw(req: Request, res: Response) {
     feePct,
   });
 }
+
+/** Checklist + invite helpers for home onboarding. */
+export async function getEngagement(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: {
+      username: true,
+      kycStatus: true,
+      referredById: true,
+      _count: { select: { referrals: true } },
+    },
+  });
+
+  const [depositCount, fundCount, guaranteeCount, loanCount] = await Promise.all([
+    prisma.transaction.count({ where: { userId, type: "DEPOSIT" } }),
+    prisma.loanFunding.count({ where: { funderId: userId } }),
+    prisma.loanGuarantor.count({
+      where: { userId, status: "ACCEPTED" },
+    }),
+    prisma.loan.count({ where: { borrowerId: userId } }),
+  ]);
+
+  const steps = {
+    verified: user.kycStatus === "VERIFIED",
+    firstDeposit: depositCount > 0,
+    fundedOrGuaranteed: fundCount > 0 || guaranteeCount > 0,
+    requestedLoan: loanCount > 0,
+  };
+  const done = Object.values(steps).filter(Boolean).length;
+
+  return res.json({
+    username: user.username,
+    kycStatus: user.kycStatus,
+    referralCount: user._count.referrals,
+    invitePath: `/register?ref=${encodeURIComponent(user.username)}`,
+    steps,
+    completedSteps: done,
+    totalSteps: 4,
+  });
+}

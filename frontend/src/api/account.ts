@@ -16,3 +16,22 @@ export function invest(amount: number) {
 export function withdraw(amount: number) {
   return request<{ principalBalance: string }>("/api/account/withdraw", { method: "POST", body: { amount } });
 }
+
+export type Engagement = {
+  username: string;
+  kycStatus: string;
+  referralCount: number;
+  invitePath: string;
+  steps: {
+    verified: boolean;
+    firstDeposit: boolean;
+    fundedOrGuaranteed: boolean;
+    requestedLoan: boolean;
+  };
+  completedSteps: number;
+  totalSteps: number;
+};
+
+export function getEngagement() {
+  return request<Engagement>("/api/account/engagement");
+}

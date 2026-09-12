@@ -15,7 +15,7 @@ const CREDIT_TYPES = new Set([
   "ADJUSTMENT",
 ]);
 
-type Panel = "statement" | "terms" | "faq" | "kyc" | null;
+type Panel = "statement" | "terms" | "faq" | "kyc" | "invite" | null;
 
 export function AccountPage() {
   const { logout, user } = useAuth();
@@ -33,10 +33,16 @@ export function AccountPage() {
   const [idBack, setIdBack] = useState<string | null>(null);
   const [kycBusy, setKycBusy] = useState(false);
   const [kycError, setKycError] = useState("");
+  const [engagement, setEngagement] = useState<accountApi.Engagement | null>(null);
 
   useEffect(() => {
     if (panel !== "statement") return;
     accountApi.getTransactions().then(setTxs).catch((err) => setError(errorMessage(err)));
+  }, [panel]);
+
+  useEffect(() => {
+    if (panel !== "invite") return;
+    accountApi.getEngagement().then(setEngagement).catch(() => setEngagement(null));
   }, [panel]);
 
   useEffect(() => {
@@ -53,6 +59,7 @@ export function AccountPage() {
   const items: { id: Exclude<Panel, null>; label: string }[] = [
     { id: "kyc", label: "Verify identity" },
     { id: "statement", label: "View statement" },
+    { id: "invite", label: "Invite friends" },
     { id: "terms", label: "Terms and conditions" },
     { id: "faq", label: "FAQs" },
   ];
@@ -120,6 +127,35 @@ export function AccountPage() {
               Nothing here yet.
             </div>
           ) : (
+            <>
+            <button
+              type="button"
+              className="btn"
+              style={{ marginBottom: 10, fontSize: 13 }}
+              onClick={() => {
+                const header = "date,type,amount,balance_after,note\n";
+                const rows = txs
+                  .map((x) =>
+                    [
+                      x.createdAt,
+                      x.type,
+                      x.amount,
+                      x.balanceAfter,
+                      JSON.stringify(x.note ?? ""),
+                    ].join(","),
+                  )
+                  .join("\n");
+                const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `zawadi-statement-${new Date().toISOString().slice(0, 10)}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              Download CSV
+            </button>
             <div className="card" style={{ overflow: "hidden" }}>
               {txs.map((t, i) => (
                 <div
@@ -152,7 +188,8 @@ export function AccountPage() {
                 </div>
               ))}
             </div>
-          ))}
+            </>
+          )}
 
         {panel === "kyc" && (
           <div>
@@ -180,7 +217,7 @@ export function AccountPage() {
 
             {!kycLoading && kycInfo?.latest?.status === "PENDING_REVIEW" && (
               <div className="card" style={{ padding: 14, fontSize: 13.5 }}>
-                Submission under review (submitted {shortDate(kycInfo.latest.createdAt)}). You will
+                Submission under review (submitted {shortDate(kycInfo.latest.createdAt)}). Reviews usually finish within about 24 hours. You will
                 get a notification when it is reviewed.
               </div>
             )}
@@ -299,6 +336,40 @@ export function AccountPage() {
               <div className="error-text" style={{ marginTop: 10 }}>
                 {kycError}
               </div>
+            )}
+          </div>
+        )}
+
+        
+        {panel === "invite" && (
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Invite friends</div>
+            <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 8, lineHeight: 1.45 }}>
+              Share your personal link. When someone registers with it, they are linked to you so
+              they can invest and later guarantee your loans.
+            </div>
+            {engagement && (
+              <>
+                <div style={{ fontSize: 13, marginTop: 12 }}>
+                  Referrals so far: <strong>{engagement.referralCount}</strong>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary-deep"
+                  style={{ marginTop: 12, width: "100%" }}
+                  onClick={async () => {
+                    const url = `${window.location.origin}${engagement.invitePath}`;
+                    try {
+                      await navigator.clipboard.writeText(url);
+                      showToast("Invite link copied");
+                    } catch {
+                      showToast(url);
+                    }
+                  }}
+                >
+                  Copy invite link
+                </button>
+              </>
             )}
           </div>
         )}

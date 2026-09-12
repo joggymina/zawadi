@@ -20,7 +20,7 @@ export function RegisterPage() {
     setBusy(true);
     setError("");
     try {
-      await register(username, phoneNumber, password);
+      await register(username, phoneNumber, password, refUsername || undefined);
       navigate("/", { replace: true });
     } catch (err) {
       setError(errorMessage(err, "Couldn't create your account."));

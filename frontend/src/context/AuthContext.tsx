@@ -7,7 +7,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (username: string, password: string) => Promise<AuthUser>;
-  register: (username: string, phoneNumber: string, password: string) => Promise<AuthUser>;
+  register: (username: string, phoneNumber: string, password: string, inviteUsername?: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
 }
 

@@ -10,6 +10,7 @@ export const registerSchema = z.object({
   username: z.string().min(3).max(32).regex(/^[a-z0-9_]+$/i, "Letters, numbers, underscores only"),
   phoneNumber: z.string().regex(/^\+254\d{9}$/, "Use format +254XXXXXXXXX"),
   password: z.string().min(10),
+  inviteUsername: z.string().min(3).max(32).optional(),
 });
 
 export const loginSchema = z.object({
@@ -38,14 +39,31 @@ function refreshCookieOptions() {
 }
 
 export async function register(req: Request, res: Response) {
-  const { username, phoneNumber, password } = req.body as z.infer<typeof registerSchema>;
+  const { username, phoneNumber, password, inviteUsername } = req.body as z.infer<
+    typeof registerSchema
+  >;
 
   if (!isPasswordStrongEnough(password)) {
-    throw new AppError("Password must be at least 10 characters and include a letter and a number.");
+    throw new AppError(
+      "Password must be at least 10 characters and include a letter and a number.",
+    );
   }
 
-  const existing = await prisma.user.findFirst({ where: { OR: [{ username }, { phoneNumber }] } });
+  const existing = await prisma.user.findFirst({
+    where: { OR: [{ username }, { phoneNumber }] },
+  });
   if (existing) throw new AppError("Username or phone number is already registered.", 409);
+
+  let referredById: string | undefined;
+  if (inviteUsername && inviteUsername.toLowerCase() !== username.toLowerCase()) {
+    const inviter = await prisma.user.findFirst({
+      where: {
+        username: { equals: inviteUsername, mode: "insensitive" },
+        NOT: { username: "__platform__" },
+      },
+    });
+    if (inviter) referredById = inviter.id;
+  }
 
   const passwordHash = await hashPassword(password);
 
@@ -54,9 +72,11 @@ export async function register(req: Request, res: Response) {
       username,
       phoneNumber,
       passwordHash,
+      referredById: referredById ?? null,
       account: { create: {} },
     },
   });
+
 
   await prisma.auditLog.create({
     data: { userId: user.id, action: "USER_REGISTERED", ip: req.ip },

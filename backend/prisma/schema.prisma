@@ -57,8 +57,12 @@ model User {
   paymentIntents       PaymentIntent[]
   reviewedRepayments   LoanRepayment[]             @relation("ReviewedBy")
   notifications        Notification[]
-    kycSubmissions       KycSubmission[]
+  kycSubmissions       KycSubmission[]
+  referredById         String?
+  referredBy           User?     @relation("UserReferrals", fields: [referredById], references: [id])
+  referrals            User[]    @relation("UserReferrals")
   @@index([phoneNumber])
+  @@index([referredById])
 }
 
 model RefreshToken {

@@ -1,7 +1,12 @@
 import { request } from "./client";
 import type { AuthUser } from "./types";
 
-export function register(params: { username: string; phoneNumber: string; password: string }) {
+export function register(params: {
+  username: string;
+  phoneNumber: string;
+  password: string;
+  inviteUsername?: string;
+}) {
   return request<AuthUser>("/api/auth/register", { method: "POST", body: params });
 }
 
